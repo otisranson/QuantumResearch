@@ -4,3 +4,4 @@ __pycache__/
 node_modules/
 dist/
 *.pt
+quantum_prime_gaps/output/*.png

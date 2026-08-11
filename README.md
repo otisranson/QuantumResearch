@@ -1,4 +1,4 @@
-# QuantumPOC
+# QuantumResearch
 
 Small proof-of-concept scripts exploring quantum computing, mostly with
 [Cirq](https://quantumai.google/cirq), Google's Python framework for building and simulating
@@ -21,18 +21,20 @@ run it.
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
 - [`quantum_gravity/`](#quantum_gravity) — emergent bulk geometry from a toy HaPPY code
 - [`path_visualizer/`](#path_visualizer) — Feynman path-integral field with a learned world model
+- [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence angle-encoded onto qubits,
+  read out through a QFT
 
 ## Prerequisites
 
-- **Python 3.10+** — for `quantum_encrypt.py`, `quantum_morse/`, and the backends of
-  `quantum_gravity/` and `path_visualizer/`.
+- **Python 3.10+** — for `quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`, and the
+  backends of `quantum_gravity/` and `path_visualizer/`.
 - **Node.js 18+ with npm** — needed for `quantum_music/` and the frontends of `quantum_gravity/`
-  and `path_visualizer/`; `quantum_encrypt.py` and `quantum_morse/` don't touch it.
+  and `path_visualizer/`; the plain Python scripts don't touch it.
 
 ## Setup
 
-This installs the dependencies for the two plain scripts below
-(`quantum_encrypt.py`, `quantum_morse/`):
+This installs the dependencies for the plain scripts below
+(`quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`):
 
 ```bash
 python3 -m venv .venv
@@ -130,6 +132,51 @@ Matches sent pulses:   True
 Decoded Morse: .... . .-.. .-.. --- / .-- --- .-. .-.. -..
 Decoded text:  'HELLO WORLD'
 ```
+
+## `quantum_prime_gaps/`
+
+A quantum spectral analysis of the prime gap sequence, built on [Qiskit](https://www.ibm.com/quantum/qiskit).
+The first 50 primes are hardcoded and their 49 consecutive gaps (2, 1, 2, 2, 4, 2, ...) are
+normalized to `[0, pi]` rotation angles. A small qubit register (4 qubits by default) is loaded
+with those angles via **data re-uploading** (Perez-Salinas et al., 2020): the 49-value sequence is
+split into chunks the size of the register, each chunk is `Ry`-rotated onto the qubits, and a ring
+of `CX` gates entangles the register before the next chunk lands — the standard way to angle-encode
+a classical sequence longer than the available qubits into a fixed-size register. A Quantum Fourier
+Transform is then applied to the fully loaded register, and the resulting statevector's Born-rule
+probabilities are read out as the "amplitude landscape" — the frequency portrait of the gap wave.
+
+Two hard checks run before anything is plotted or a qubit touches real hardware: the 50 hardcoded
+primes are independently re-derived with a sieve, and the entire circuit (rotations, entanglers,
+QFT) is separately re-implemented as dense linear algebra in plain numpy — with no dependency on
+Qiskit's simulator — and asserted to match Qiskit's own `Statevector` output to floating-point
+precision. A softer, exploratory check compares the real sequence's amplitude-landscape entropy
+against 50 random shuffles of the same 49 gap values, since re-uploading is order-sensitive; it's
+reported, not asserted, since a single ordering isn't guaranteed to beat a shuffle average.
+
+```bash
+./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py
+```
+
+Writes three plots to `quantum_prime_gaps/output/`: the raw gap sequence, the post-QFT amplitude
+landscape (probability and phase per basis state), and a frequency portrait re-centered around zero
+the way a classical FFT magnitude spectrum is usually drawn. `--qubits N` changes the register size
+(and therefore how many gap values land in each re-upload chunk). `--hardware` runs the same circuit
+on a real IBM Quantum backend via `qiskit-ibm-runtime`'s Sampler primitive instead of just
+simulating — pick one with `--backend NAME` or let it default to the least-busy device.
+
+It needs an IBM Quantum API token. Set it via the `QISKIT_IBM_TOKEN` environment variable —
+`qiskit-ibm-runtime` picks this up automatically, so no flag or code change is needed:
+
+```bash
+export QISKIT_IBM_TOKEN="your-ibm-quantum-api-token"
+./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py --hardware
+```
+
+Get a token from the [IBM Quantum Platform dashboard](https://quantum.cloud.ibm.com/) after
+registering. Put the `export` line in your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist
+it across sessions — just avoid committing it anywhere or pasting it into a script argument, since
+both shell history and `ps` output can leak it. Alternatively, save it once to disk instead of the
+environment with `QiskitRuntimeService.save_account(channel="ibm_quantum_platform", token="...")`.
 
 ## `quantum_gravity/`
 
