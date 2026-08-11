@@ -135,6 +135,8 @@ Decoded text:  'HELLO WORLD'
 
 ## `quantum_prime_gaps/`
 
+![Amplitude landscape after QFT](quantum_prime_gaps/screenshots/amplitude_landscape_sim.png)
+
 A quantum spectral analysis of the prime gap sequence, built on [Qiskit](https://www.ibm.com/quantum/qiskit).
 The first 50 primes are hardcoded and their 49 consecutive gaps (2, 1, 2, 2, 4, 2, ...) are
 normalized to `[0, pi]` rotation angles. A small qubit register (4 qubits by default) is loaded
@@ -157,12 +159,27 @@ reported, not asserted, since a single ordering isn't guaranteed to beat a shuff
 ./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py
 ```
 
-Writes three plots to `quantum_prime_gaps/output/`: the raw gap sequence, the post-QFT amplitude
-landscape (probability and phase per basis state), and a frequency portrait re-centered around zero
-the way a classical FFT magnitude spectrum is usually drawn. `--qubits N` changes the register size
-(and therefore how many gap values land in each re-upload chunk). `--hardware` runs the same circuit
-on a real IBM Quantum backend via `qiskit-ibm-runtime`'s Sampler primitive instead of just
-simulating — pick one with `--backend NAME` or let it default to the least-busy device.
+Writes three plots to `quantum_prime_gaps/output/`, each tagged `_sim` since they come from the
+exact statevector simulation: the raw `gap_sequence.png`, `amplitude_landscape_sim.png` (probability
+and phase per basis state), and `frequency_portrait_sim.png`, re-centered around zero the way a
+classical FFT magnitude spectrum is usually drawn. `--qubits N` changes the register size (and
+therefore how many gap values land in each re-upload chunk).
+
+`--hardware` additionally runs the same circuit on a real IBM Quantum backend via
+`qiskit-ibm-runtime`'s Sampler primitive — pick one with `--backend NAME` or let it default to the
+least-busy device — and writes a fourth plot, `amplitude_landscape_quantum_<backend>.png`, overlaying
+the real measured probabilities against the simulated ones so noise is visible directly. Hardware
+only returns measurement counts, not the full complex statevector, so this overlay compares
+probabilities only — there's no hardware equivalent of the phase panel in the `_sim` plot.
+
+The amplitude landscape's probability bars are symmetric about the middle index (`P(k) ~= P(dim-k)`)
+because the pre-QFT state only ever goes through `Ry` and `CX` gates — no complex phases — so it's
+entirely real-valued, and a QFT of any real-valued input is symmetric that way as a general fact.
+With `--qubits 4` (16 basis states, 6 of which are prime), some peaks landing on prime-looking
+indices is expected by chance, not evidence the circuit has found prime structure at those
+positions. This pipeline reads out a fixed encoding of the 49 known gaps — it doesn't extrapolate
+past them, so it has no way to predict the 50th prime's gap as-is; that would need a different,
+trained approach layered on top.
 
 It needs an IBM Quantum API token. Set it via the `QISKIT_IBM_TOKEN` environment variable —
 `qiskit-ibm-runtime` picks this up automatically, so no flag or code change is needed:
