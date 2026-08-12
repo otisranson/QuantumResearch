@@ -139,7 +139,7 @@ Decoded text:  'HELLO WORLD'
 
 A quantum spectral analysis of the prime gap sequence, built on [Qiskit](https://www.ibm.com/quantum/qiskit).
 The first 50 primes are hardcoded and their 49 consecutive gaps (2, 1, 2, 2, 4, 2, ...) are
-normalized to `[0, pi]` rotation angles. A small qubit register (4 qubits by default) is loaded
+normalized to `[0, pi]` rotation angles. A small qubit register (6 qubits by default) is loaded
 with those angles via **data re-uploading** (Perez-Salinas et al., 2020): the 49-value sequence is
 split into chunks the size of the register, each chunk is `Ry`-rotated onto the qubits, and a ring
 of `CX` gates entangles the register before the next chunk lands — the standard way to angle-encode
@@ -175,7 +175,7 @@ probabilities only — there's no hardware equivalent of the phase panel in the 
 The amplitude landscape's probability bars are symmetric about the middle index (`P(k) ~= P(dim-k)`)
 because the pre-QFT state only ever goes through `Ry` and `CX` gates — no complex phases — so it's
 entirely real-valued, and a QFT of any real-valued input is symmetric that way as a general fact.
-With `--qubits 4` (16 basis states, 6 of which are prime), some peaks landing on prime-looking
+With `--qubits 6` (64 basis states, 18 of which are prime), some peaks landing on prime-looking
 indices is expected by chance, not evidence the circuit has found prime structure at those
 positions.
 
