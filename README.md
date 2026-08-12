@@ -139,7 +139,8 @@ Decoded text:  'HELLO WORLD'
 
 A quantum spectral analysis of the prime gap sequence, built on [Qiskit](https://www.ibm.com/quantum/qiskit).
 The first 50 primes are hardcoded and their 49 consecutive gaps (2, 1, 2, 2, 4, 2, ...) are
-normalized to `[0, pi]` rotation angles. A small qubit register (6 qubits by default) is loaded
+normalized to `[0, pi]` rotation angles. A small qubit register (7 qubits by default, shared with
+the prediction pathway below via the same `--qubits` flag) is loaded
 with those angles via **data re-uploading** (Perez-Salinas et al., 2020): the 49-value sequence is
 split into chunks the size of the register, each chunk is `Ry`-rotated onto the qubits, and a ring
 of `CX` gates entangles the register before the next chunk lands — the standard way to angle-encode
@@ -170,12 +171,15 @@ therefore how many gap values land in each re-upload chunk).
 least-busy device — and writes a fourth plot, `amplitude_landscape_quantum_<backend>.png`, overlaying
 the real measured probabilities against the simulated ones so noise is visible directly. Hardware
 only returns measurement counts, not the full complex statevector, so this overlay compares
-probabilities only — there's no hardware equivalent of the phase panel in the `_sim` plot.
+probabilities only — there's no hardware equivalent of the phase panel in the `_sim` plot. (As of
+the prediction-pathway rewrite below, `--hardware` also submits the prediction circuit and writes a
+second overlay, `amplitude_landscape_prediction_quantum_<backend>.png`, with the same
+probabilities-only caveat.)
 
 The amplitude landscape's probability bars are symmetric about the middle index (`P(k) ~= P(dim-k)`)
 because the pre-QFT state only ever goes through `Ry` and `CX` gates — no complex phases — so it's
 entirely real-valued, and a QFT of any real-valued input is symmetric that way as a general fact.
-With `--qubits 6` (64 basis states, 18 of which are prime), some peaks landing on prime-looking
+With `--qubits 7` (128 basis states, 31 of which are prime), some peaks landing on prime-looking
 indices is expected by chance, not evidence the circuit has found prime structure at those
 positions.
 
@@ -197,39 +201,62 @@ environment with `QiskitRuntimeService.save_account(channel="ibm_quantum_platfor
 known gaps — the re-upload encoding it uses is a lossy, nonlinear feature map (the same small
 register gets repeatedly overwritten and entangled), so there's no meaningful inverse QFT back
 through it to extrapolate past index 49. Prediction runs on a second, additive pathway built for
-that purpose: the gap sequence is L2-normalized and loaded directly as a statevector's amplitudes
-(not angle rotations), so its QFT is a literal, invertible Quantum Fourier Transform of the real
-time-domain samples. Before any prediction is trusted, `verify_amplitude_qft_roundtrip` checks that
-gate-level QFT against the from-scratch numpy DFT reference used elsewhere in this file, and that
-appending the inverse QFT recovers the original amplitudes to floating-point precision.
+that purpose, sized by the same `--qubits` flag as the landscape above: the gap sequence is
+zero-padded to `2**qubits`, L2-normalized, and loaded directly as a statevector's amplitudes (not
+angle rotations), so its QFT is a literal, invertible Quantum Fourier Transform of the real
+time-domain samples.
+
+The frequency representation used for prediction is read directly from that circuit
+(`quantum_fft`), not from `np.fft.fft` — Qiskit's `QFTGate` turns out to use the *opposite* sign
+convention from `np.fft.fft` (confirmed empirically: the plain forward gate matches
+`sqrt(dim) * np.fft.ifft`, not `np.fft.fft`), so `quantum_fft` appends `QFTGate(n).inverse()` and
+rescales by the encoding norm and `sqrt(dim)` to land on the same convention everything else in this
+file assumes. `verify_quantum_fft_matches_padded_numpy` checks that result against `np.fft.fft` on
+the identical zero-padded array to floating-point precision, on every run, so this isn't just
+trusted by reasoning about Qiskit's convention.
 
 A fixed-size inverse QFT can only reconstruct the same known points it was given — it can't produce
 new ones. "Time evolution" past index 49 is therefore a separate, explicitly classical step
-(`fourier_extrapolate`): the known gaps' DFT spectrum is read as a continuous function of time and
-evaluated past the known window. By default every frequency is kept, which is equivalent to
-assuming the known window is exactly one period (`--top-k N` restricts the reconstruction to the
-`N` strongest frequency components instead, testing a "only a few dominant periodicities matter"
-assumption). `spectral_candidate_zones` sweeps that truncation from 1 frequency up to 5, reporting
-each level's resulting candidate primes (from `--predict-steps`, default 10, past prime 229) next
-to the fraction of the sequence's total spectral power that level represents — the same quantity
-plotted in the amplitude landscape above, not an invented probability.
+(`quantum_fourier_extrapolate` for the quantum spectrum, `fourier_extrapolate` for the classical
+`np.fft.fft` one, both calling the same `_dft_reconstruct`): the spectrum is read as a continuous
+function of time and evaluated past the known window. The classical path's default keeps every
+frequency, equivalent to assuming the known window is exactly one period — the least arbitrary
+choice, since it's never padded. The quantum path can't use that default: because its register is
+padded with zeros, a full-spectrum reconstruction is an exact identity that just reproduces the
+padding as "predicted" gaps, so it always truncates to a handful of frequencies
+(`QUANTUM_DEFAULT_TOP_K = 5` unless `--top-k N` overrides it). `spectral_candidate_zones` sweeps
+that truncation from 1 to 5 for both pathways, reporting each level's resulting candidate primes
+(from `--predict-steps`, default 10, past prime 229) next to the fraction of the sequence's total
+spectral power that level represents — the same quantity plotted in the amplitude landscape, not an
+invented probability. Zero-padding dilutes that power across many more bins (in a typical run the
+classical top-1 component alone captures ~70% of the spectral power; the quantum, padded top-1
+captures only ~35%), so the two pathways' zones aren't reading the same frequencies even at the same
+truncation level — an inherent cost of amplitude-encoding onto a power-of-2 register, not a bug.
 
-Backward verification is the accuracy check: the identical `predict()` mechanism runs on just the
-first 40 primes (39 known gaps) to predict gaps 40–49 — exactly the 10 gaps needed to know primes
-41–50 — and compares against the real values, reporting mean absolute error alongside two naive
-baselines (repeat the mean known gap; repeat the last known gap). On the current default settings
-this mechanism does **not** beat either naive baseline, which is the honest result of the check: a
-Fourier-based extrapolation assumes some periodic structure in the input, and prime gaps don't have
-a simple periodic structure to find, so this stands as a documented negative result rather than a
-claim the forward prediction of gaps past 49 means anything yet.
+Backward verification is the accuracy check, and now reports classical and quantum side by side:
+`backward_verify` and `backward_verify_quantum` both predict gaps 40–49 (i.e. primes 41–50) from
+only the first 40 primes' 39 known gaps, run at the *same* `top_k` so the comparison isolates the
+pathway itself rather than a differing truncation assumption. **On the noiseless simulator the two
+MAEs are close but not identical** (the small remaining gap is exactly the padding/leakage effect
+above, not sign-convention noise — that's separately proven by `verify_quantum_fft_matches_padded_numpy`).
+Neither pathway beats the two naive baselines (repeat the mean known gap; repeat the last known
+gap) on the current default settings, which is the honest result of the check: a Fourier-based
+extrapolation assumes some periodic structure in the input, and prime gaps don't have a simple
+periodic structure to find, so this stands as a documented negative result rather than a claim the
+forward prediction of gaps past 49 means anything yet — for either pathway.
 
 ```bash
 ./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py --predict-steps 10 --top-k 3
 ```
 
 Change `--predict-steps` and `--top-k` to explore the forward horizon and truncation assumption;
-the extended wave (known gaps solid, predicted gaps dashed, boundary marked) is written to
-`quantum_prime_gaps/output/extended_wave_predicted.png`.
+the extended wave (known gaps solid, classical prediction dashed red, quantum-circuit prediction
+dashed purple, boundary marked) is written to
+`quantum_prime_gaps/output/extended_wave_predicted.png`. A full run report —classical vs. quantum
+MAE, forward candidates for both pathways, which pathway produced each PNG this run, and any
+console warnings — is written automatically to
+`quantum_prime_gaps/output/7QUBIT_QUANTUM_PREDICTION.md` every time the script runs; it's
+overwritten each run rather than accumulating history.
 
 ## `quantum_gravity/`
 
