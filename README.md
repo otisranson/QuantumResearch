@@ -258,6 +258,31 @@ console warnings — is written automatically to
 `quantum_prime_gaps/output/7QUBIT_QUANTUM_PREDICTION.md` every time the script runs; it's
 overwritten each run rather than accumulating history.
 
+**Running the prediction circuit on real hardware.** `--hardware` submits the amplitude-encoded
+prediction circuit (in addition to the landscape circuit, as before) to a dynamically-selected
+IBM Quantum backend — `--backend` overrides it, otherwise it's always `least_busy`, never
+hardcoded. Shots default to an adaptive policy (4096 if the selected backend's queue is shallow,
+1024 if it's deep — `--shots N` overrides this), readout error mitigation (measurement twirling)
+is always enabled, and the transpiled circuit's depth/gate count are printed with a warning past
+50 gates, since deep circuits accumulate noise fast — arbitrary amplitude encoding via
+`initialize()` on a 128-dimensional state transpiles to several hundred gates on real hardware
+coupling maps, well past that threshold, which is exactly what a first hardware run showed:
+the hardware-measured amplitude landscape is visibly flattened relative to the sharp simulated
+peaks, not a subtle effect. This writes three more plots
+(`hardware_amplitude_landscape.png`, `hardware_vs_sim_comparison.png` — side-by-side panels,
+same y-axis scale, so the gap between them *is* the noise floor — and
+`hardware_frequency_portrait.png`) and a `quantum_prime_gaps/output/7QUBIT_HW_RESULTS.md` report
+(job ID, backend, shots, transpiled depth, mitigation status, queue wait time, and the
+hardware-vs-simulated MAE), overwritten on every hardware run.
+
+One thing this can't do: report genuine hardware-measured candidate zones. A single Sampler
+measurement only yields Born-rule probabilities — phase is destroyed by measurement, and the
+candidate-zone reconstruction needs it. Recovering phase from hardware would need full state
+tomography (multiple non-commuting measurement bases, exponential in qubit count), out of scope
+for one run. Instead, `7QUBIT_HW_RESULTS.md` reports a clearly-labeled hybrid — hardware-measured
+*magnitude* combined with simulator *phase* — which answers only the narrower question of whether
+readout noise alone moves the zones, never presented as an unqualified hardware result.
+
 ## `quantum_gravity/`
 
 A full-stack toy demo of emergent bulk geometry from boundary entanglement, loosely inspired by
