@@ -211,6 +211,8 @@ readout noise alone moves the zones, never presented as an unqualified hardware 
 
 ## `quantum_music/`
 
+![Quantum Music](quantum_music/screenshots/screenshot.png)
+
 A playable piano keyboard, one octave, where each of the twelve keys is bound to a quantum gate
 instead of just a note. Press a key and two things happen at once: an audible sine-wave tone
 plays (standard C4–B4 piano frequencies via the Web Audio API), and its gate shows up on a live
