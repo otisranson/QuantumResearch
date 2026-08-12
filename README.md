@@ -177,9 +177,7 @@ because the pre-QFT state only ever goes through `Ry` and `CX` gates — no comp
 entirely real-valued, and a QFT of any real-valued input is symmetric that way as a general fact.
 With `--qubits 4` (16 basis states, 6 of which are prime), some peaks landing on prime-looking
 indices is expected by chance, not evidence the circuit has found prime structure at those
-positions. This pipeline reads out a fixed encoding of the 49 known gaps — it doesn't extrapolate
-past them, so it has no way to predict the 50th prime's gap as-is; that would need a different,
-trained approach layered on top.
+positions.
 
 It needs an IBM Quantum API token. Set it via the `QISKIT_IBM_TOKEN` environment variable —
 `qiskit-ibm-runtime` picks this up automatically, so no flag or code change is needed:
@@ -194,6 +192,44 @@ registering. Put the `export` line in your shell profile (`~/.bashrc`, `~/.zshrc
 it across sessions — just avoid committing it anywhere or pasting it into a script argument, since
 both shell history and `ps` output can leak it. Alternatively, save it once to disk instead of the
 environment with `QiskitRuntimeService.save_account(channel="ibm_quantum_platform", token="...")`.
+
+**Prediction phase.** The landscape/portrait pipeline above reads out a fixed encoding of the 49
+known gaps — the re-upload encoding it uses is a lossy, nonlinear feature map (the same small
+register gets repeatedly overwritten and entangled), so there's no meaningful inverse QFT back
+through it to extrapolate past index 49. Prediction runs on a second, additive pathway built for
+that purpose: the gap sequence is L2-normalized and loaded directly as a statevector's amplitudes
+(not angle rotations), so its QFT is a literal, invertible Quantum Fourier Transform of the real
+time-domain samples. Before any prediction is trusted, `verify_amplitude_qft_roundtrip` checks that
+gate-level QFT against the from-scratch numpy DFT reference used elsewhere in this file, and that
+appending the inverse QFT recovers the original amplitudes to floating-point precision.
+
+A fixed-size inverse QFT can only reconstruct the same known points it was given — it can't produce
+new ones. "Time evolution" past index 49 is therefore a separate, explicitly classical step
+(`fourier_extrapolate`): the known gaps' DFT spectrum is read as a continuous function of time and
+evaluated past the known window. By default every frequency is kept, which is equivalent to
+assuming the known window is exactly one period (`--top-k N` restricts the reconstruction to the
+`N` strongest frequency components instead, testing a "only a few dominant periodicities matter"
+assumption). `spectral_candidate_zones` sweeps that truncation from 1 frequency up to 5, reporting
+each level's resulting candidate primes (from `--predict-steps`, default 10, past prime 229) next
+to the fraction of the sequence's total spectral power that level represents — the same quantity
+plotted in the amplitude landscape above, not an invented probability.
+
+Backward verification is the accuracy check: the identical `predict()` mechanism runs on just the
+first 40 primes (39 known gaps) to predict gaps 40–49 — exactly the 10 gaps needed to know primes
+41–50 — and compares against the real values, reporting mean absolute error alongside two naive
+baselines (repeat the mean known gap; repeat the last known gap). On the current default settings
+this mechanism does **not** beat either naive baseline, which is the honest result of the check: a
+Fourier-based extrapolation assumes some periodic structure in the input, and prime gaps don't have
+a simple periodic structure to find, so this stands as a documented negative result rather than a
+claim the forward prediction of gaps past 49 means anything yet.
+
+```bash
+./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py --predict-steps 10 --top-k 3
+```
+
+Change `--predict-steps` and `--top-k` to explore the forward horizon and truncation assumption;
+the extended wave (known gaps solid, predicted gaps dashed, boundary marked) is written to
+`quantum_prime_gaps/output/extended_wave_predicted.png`.
 
 ## `quantum_gravity/`
 
