@@ -11,39 +11,16 @@ way, real IBM Quantum hardware where it counts — built with [Cirq](https://qua
 and [Qiskit](https://www.ibm.com/quantum/qiskit), Google's and IBM's Python frameworks for
 building, simulating, and running quantum circuits.
 
-## ⭐ [`quantum_music/`](#quantum_music) — play the wavefunction
-
-![Quantum Music](quantum_music/screenshots/screenshot.png)
-
-The flagship of this repo. A playable piano keyboard where every key *is* a quantum gate — press
-one and you hear a tone and watch the gate land on a live circuit diagram in real time. It's the
-most immediate, tactile way in here to feel what a quantum circuit actually is: not a diagram you
-read, but one you play. See the [full writeup below](#quantum_music) for how it works and how to
-run it.
-
-## ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — the prime gap wave, on real quantum hardware
-
-![Simulated vs. hardware amplitude landscape, same axis scale](quantum_prime_gaps/screenshots/hw/hardware_vs_sim_comparison.png)
-
-The first 50 primes' gap sequence, encoded onto qubits and read out through a Quantum Fourier
-Transform — simulated on the left, measured on a real IBM Quantum backend (`ibm_kingston`) on the
-right, same axis scale both panels. The simulated landscape has two sharp, unmistakable peaks; the
-hardware one is nearly flat. That gap between the panels *is* the noise floor, measured on a real
-chip, not estimated — the [full writeup below](#quantum_prime_gaps) covers the amplitude-encoding
-circuit, the classical-vs-quantum prediction pathway built on top of it, and exactly why the
-signal collapses on hardware (short version: arbitrary amplitude encoding onto `n` qubits costs
-exponentially more gates as `n` grows, and it shows — 907 transpiled gates for 7 qubits).
-
 ## Contents
 
+- ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence encoded onto qubits, read
+  out through a QFT, predicted two ways (classical FFT vs. an actual quantum circuit), and run on
+  real IBM Quantum hardware
 - ⭐ [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
 - [`quantum_encrypt.py`](#quantum_encryptpy) — quantum random number generator one-time pad
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
 - [`quantum_gravity/`](#quantum_gravity) — emergent bulk geometry from a toy HaPPY code
 - [`path_visualizer/`](#path_visualizer) — Feynman path-integral field with a learned world model
-- ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence encoded onto qubits, read
-  out through a QFT, predicted two ways (classical FFT vs. an actual quantum circuit), and run on
-  real IBM Quantum hardware
 
 ## Prerequisites
 
@@ -65,94 +42,6 @@ python3 -m venv .venv
 `quantum_gravity/` and `path_visualizer/` are self-contained and don't use this venv — each has
 its own `run.sh` that creates its own backend venv and installs its own frontend dependencies on
 first run, as described in their sections below.
-
-## `quantum_music/`
-
-A playable piano keyboard, one octave, where each of the twelve keys is bound to a quantum gate
-instead of just a note. Press a key and two things happen at once: an audible sine-wave tone
-plays (standard C4–B4 piano frequencies via the Web Audio API), and its gate shows up on a live
-circuit diagram over a two-qubit register, `q0` and `q1`. White keys carry the classic gate set —
-`H X Y Z S T CNOT`; black keys carry rotations and a second entangling pair — `Rx Ry Rz CZ SWAP`.
-Single-qubit gates land on `q0` (except `Rz`, which targets `q1`, so both wires get some traffic),
-and `CNOT` / `CZ` / `SWAP` span both.
-
-There are two modes. **Freeplay** is instant gratification — every keypress plays its tone and
-pops up an info card for that one gate (symbol, name, description, target qubit), with nothing
-accumulating. **Record** turns the piano into a composer: press Record, and every key you play is
-both heard and appended to the circuit diagram, gate after gate in standard circuit notation
-(control dots, `⊕` targets, `×` swaps) rendered live in SVG; press End to lock the finished
-circuit in place. A gear-icon Settings panel lets you remap any of the twelve keys to any keyboard
-key, in case the default `A S D F G H J` / `W E T Y U` layout doesn't fit your hands.
-
-No backend, no external UI libraries — just React, Tailwind, and the Web Audio API.
-
-```bash
-cd quantum_music
-npm install
-npm run dev
-```
-
-Then open the URL Vite prints (typically http://localhost:5173) and start playing — either by
-clicking keys or by typing on the keyboard mapping shown in the corner of each key.
-
-## `quantum_encrypt.py`
-
-Real encryption: a one-time pad keyed by a quantum random number generator. Hadamard-superposed
-qubits are measured (in batches, to keep each simulated state vector small) to produce a key of
-genuinely random bits, which is then XORed with the message's binary form.
-
-```bash
-./.venv/bin/python quantum_encrypt.py
-```
-
-It also decrypts the ciphertext with a second, different random key to show the result is
-garbage — a one-time pad is only secure if the exact same key is reused for decryption, is truly
-random, is the same length as the message, is never reused, and stays secret.
-
-Sample output (the key and ciphertext are freshly random each run):
-
-```
-Message: 'hello hilbert'
-
-Quantum-generated key: 01000101101001111111000111110000010100010101100011111101001110011101010101001011001111101011010000001000
-Ciphertext (bits):     00101101110000101001110110011100001111100111100010010101010100001011100100101001010110111100011001111100
-Ciphertext (hex):      2dc29d9c3e789550b9295bc67c
-
-Decrypted with correct key: 'hello hilbert'
-Decrypted with wrong key:   '\x96\x11\x17F\x81M\x15\x8f+\x10`o\x84'
-```
-
-## `quantum_morse/quantum_morse.py`
-
-A Morse code device simulated on qubits. A message is translated to Morse, then to an ITU-timed
-pulse train (dot = 1 unit on, dash = 3, gaps of 1/3/7 units for symbol/letter/word boundaries).
-Each pulse bit is "transmitted" by writing it onto a qubit with an `X` gate and reading it back
-via measurement (batched, to keep each simulated state vector small), then decoded back through
-Morse to text.
-
-```bash
-./.venv/bin/python quantum_morse/quantum_morse.py "your message here"
-```
-
-Run with no argument to instead run through a set of built-in example messages
-(`SOS HELP`, `HELLO`, `CQ DE W1AW 73`, `A`).
-
-Sample output:
-
-```
-$ ./.venv/bin/python quantum_morse/quantum_morse.py "HELLO WORLD"
-
-Message: 'HELLO WORLD'
-
-Morse:       .... . .-.. .-.. --- / .-- --- .-. .-.. -..
-Pulse train: 101010100010001011101010001011101010001110111011100000001011101110001110111011100010111010001011101010001110101
-
-Read back from qubits: 101010100010001011101010001011101010001110111011100000001011101110001110111011100010111010001011101010001110101
-Matches sent pulses:   True
-
-Decoded Morse: .... . .-.. .-.. --- / .-- --- .-. .-.. -..
-Decoded text:  'HELLO WORLD'
-```
 
 ## `quantum_prime_gaps/`
 
@@ -319,6 +208,94 @@ tomography (multiple non-commuting measurement bases, exponential in qubit count
 for one run. Instead, `7QUBIT_HW_RESULTS.md` reports a clearly-labeled hybrid — hardware-measured
 *magnitude* combined with simulator *phase* — which answers only the narrower question of whether
 readout noise alone moves the zones, never presented as an unqualified hardware result.
+
+## `quantum_music/`
+
+A playable piano keyboard, one octave, where each of the twelve keys is bound to a quantum gate
+instead of just a note. Press a key and two things happen at once: an audible sine-wave tone
+plays (standard C4–B4 piano frequencies via the Web Audio API), and its gate shows up on a live
+circuit diagram over a two-qubit register, `q0` and `q1`. White keys carry the classic gate set —
+`H X Y Z S T CNOT`; black keys carry rotations and a second entangling pair — `Rx Ry Rz CZ SWAP`.
+Single-qubit gates land on `q0` (except `Rz`, which targets `q1`, so both wires get some traffic),
+and `CNOT` / `CZ` / `SWAP` span both.
+
+There are two modes. **Freeplay** is instant gratification — every keypress plays its tone and
+pops up an info card for that one gate (symbol, name, description, target qubit), with nothing
+accumulating. **Record** turns the piano into a composer: press Record, and every key you play is
+both heard and appended to the circuit diagram, gate after gate in standard circuit notation
+(control dots, `⊕` targets, `×` swaps) rendered live in SVG; press End to lock the finished
+circuit in place. A gear-icon Settings panel lets you remap any of the twelve keys to any keyboard
+key, in case the default `A S D F G H J` / `W E T Y U` layout doesn't fit your hands.
+
+No backend, no external UI libraries — just React, Tailwind, and the Web Audio API.
+
+```bash
+cd quantum_music
+npm install
+npm run dev
+```
+
+Then open the URL Vite prints (typically http://localhost:5173) and start playing — either by
+clicking keys or by typing on the keyboard mapping shown in the corner of each key.
+
+## `quantum_encrypt.py`
+
+Real encryption: a one-time pad keyed by a quantum random number generator. Hadamard-superposed
+qubits are measured (in batches, to keep each simulated state vector small) to produce a key of
+genuinely random bits, which is then XORed with the message's binary form.
+
+```bash
+./.venv/bin/python quantum_encrypt.py
+```
+
+It also decrypts the ciphertext with a second, different random key to show the result is
+garbage — a one-time pad is only secure if the exact same key is reused for decryption, is truly
+random, is the same length as the message, is never reused, and stays secret.
+
+Sample output (the key and ciphertext are freshly random each run):
+
+```
+Message: 'hello hilbert'
+
+Quantum-generated key: 01000101101001111111000111110000010100010101100011111101001110011101010101001011001111101011010000001000
+Ciphertext (bits):     00101101110000101001110110011100001111100111100010010101010100001011100100101001010110111100011001111100
+Ciphertext (hex):      2dc29d9c3e789550b9295bc67c
+
+Decrypted with correct key: 'hello hilbert'
+Decrypted with wrong key:   '\x96\x11\x17F\x81M\x15\x8f+\x10`o\x84'
+```
+
+## `quantum_morse/quantum_morse.py`
+
+A Morse code device simulated on qubits. A message is translated to Morse, then to an ITU-timed
+pulse train (dot = 1 unit on, dash = 3, gaps of 1/3/7 units for symbol/letter/word boundaries).
+Each pulse bit is "transmitted" by writing it onto a qubit with an `X` gate and reading it back
+via measurement (batched, to keep each simulated state vector small), then decoded back through
+Morse to text.
+
+```bash
+./.venv/bin/python quantum_morse/quantum_morse.py "your message here"
+```
+
+Run with no argument to instead run through a set of built-in example messages
+(`SOS HELP`, `HELLO`, `CQ DE W1AW 73`, `A`).
+
+Sample output:
+
+```
+$ ./.venv/bin/python quantum_morse/quantum_morse.py "HELLO WORLD"
+
+Message: 'HELLO WORLD'
+
+Morse:       .... . .-.. .-.. --- / .-- --- .-. .-.. -..
+Pulse train: 101010100010001011101010001011101010001110111011100000001011101110001110111011100010111010001011101010001110101
+
+Read back from qubits: 101010100010001011101010001011101010001110111011100000001011101110001110111011100010111010001011101010001110101
+Matches sent pulses:   True
+
+Decoded Morse: .... . .-.. .-.. --- / .-- --- .-. .-.. -..
+Decoded text:  'HELLO WORLD'
+```
 
 ## `quantum_gravity/`
 
