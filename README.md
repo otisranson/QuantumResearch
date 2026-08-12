@@ -265,6 +265,28 @@ Decrypted with correct key: 'hello hilbert'
 Decrypted with wrong key:   '\x96\x11\x17F\x81M\x15\x8f+\x10`o\x84'
 ```
 
+`--hardware` sources the key from a real IBM Quantum backend via Qiskit instead of Cirq's local
+simulator — an actual physical Hadamard-and-measure, not a stand-in for one. Needs an IBM Quantum
+API token; same setup as `quantum_prime_gaps/` above (`QISKIT_IBM_TOKEN` env var, or a saved
+account via `QiskitRuntimeService.save_account(...)`). Unlike the statistical Sampler runs in
+`quantum_prime_gaps/` (many shots distilled into a probability distribution), this needs exactly
+one shot per qubit — each shot *is* the random bit, not a sample used to estimate something — and
+applies no readout-error mitigation, since correcting toward an "expected" distribution would work
+against getting the device's raw physical randomness, not for it. `--backend NAME` picks a specific
+backend; otherwise it's always `least_busy`.
+
+```bash
+./.venv/bin/python quantum_encrypt.py --hardware
+```
+
+Writes a run report to `output/HARDWARE_RUN.md` (backend, job IDs, queue depth, and the same
+message/key/ciphertext/decryption fields as the sample output above) — overwritten on every
+hardware run, like the hardware reports in `quantum_prime_gaps/`, with prior results living in git
+history rather than accumulating in the file. Confirmed working end to end on `ibm_marrakesh`: the
+message encrypted with a hardware-measured key, decrypted correctly with that same key, and
+garbled with a second, independent hardware-measured key — the full one-time-pad round trip, on
+real qubits.
+
 ## `quantum_morse/quantum_morse.py`
 
 A Morse code device simulated on qubits. A message is translated to Morse, then to an ITU-timed
