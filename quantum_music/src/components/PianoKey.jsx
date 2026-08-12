@@ -1,9 +1,19 @@
-export default function PianoKey({ gateDef, keyBinding, isActive, onPress, onRelease, style, className = '' }) {
+export default function PianoKey({
+  gateDef,
+  keyBinding,
+  isActive,
+  onPress,
+  onRelease,
+  style,
+  className = '',
+  disabled = false,
+}) {
   const isWhite = gateDef.type === 'white';
   const symbolSize = gateDef.symbol.length > 2 ? 'text-sm' : 'text-lg';
 
   function handleDown(e) {
     e.preventDefault();
+    if (disabled) return;
     onPress(gateDef);
   }
 
@@ -19,13 +29,14 @@ export default function PianoKey({ gateDef, keyBinding, isActive, onPress, onRel
     <button
       type="button"
       aria-label={`${gateDef.fullName} (${gateDef.symbol})`}
+      disabled={disabled}
       onPointerDown={handleDown}
       onPointerUp={() => onRelease(gateDef)}
       onPointerLeave={() => onRelease(gateDef)}
       onPointerCancel={() => onRelease(gateDef)}
       onContextMenu={(e) => e.preventDefault()}
       style={style}
-      className={`${isWhite ? baseWhite : baseBlack} ${isActive ? (isWhite ? activeWhite : activeBlack) : ''} ${className}`}
+      className={`${isWhite ? baseWhite : baseBlack} ${isActive ? (isWhite ? activeWhite : activeBlack) : ''} ${className} disabled:cursor-not-allowed disabled:opacity-60`}
     >
       <span
         className={`absolute right-1.5 top-1.5 font-mono text-[10px] uppercase tracking-wide ${

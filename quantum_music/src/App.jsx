@@ -7,7 +7,9 @@ import SettingsPanel from './components/SettingsPanel';
 import { useAudio } from './hooks/useAudio';
 import { useKeyboardBindings } from './hooks/useKeyboardBindings';
 import { useQuantumCircuit, MODES } from './hooks/useQuantumCircuit';
+import { usePlayback } from './hooks/usePlayback';
 import { GATES_BY_ID, DEFAULT_KEY_MAP } from './constants/gates';
+import { FUR_ELISE } from './constants/songs';
 
 export default function App() {
   const [bindings, setBindings] = useState(DEFAULT_KEY_MAP);
@@ -51,10 +53,20 @@ export default function App() {
     });
   }, []);
 
+  const { isPlaying, play: playSong, stop: stopSong } = usePlayback(FUR_ELISE, {
+    onPress: handlePress,
+    onRelease: handleRelease,
+    onStart: () => {
+      clearCircuit();
+      startRecording();
+    },
+    onEnd: endRecording,
+  });
+
   useKeyboardBindings(reverseKeyMap, {
     onPress: handlePress,
     onRelease: handleRelease,
-    enabled: !settingsOpen,
+    enabled: !settingsOpen && !isPlaying,
   });
 
   const handlePianoPress = useCallback((gateDef) => handlePress(gateDef.id), [handlePress]);
@@ -120,10 +132,13 @@ export default function App() {
           <div className="flex items-start sm:items-center">
             <Controls
               mode={mode}
+              isPlaying={isPlaying}
               onRecord={startRecording}
               onEnd={endRecording}
               onClear={clearCircuit}
               onReset={resetAll}
+              onPlay={playSong}
+              onStop={stopSong}
               onOpenSettings={() => setSettingsOpen(true)}
             />
           </div>
@@ -137,6 +152,7 @@ export default function App() {
             activeKeyIds={activeKeyIds}
             onPress={handlePianoPress}
             onRelease={handlePianoRelease}
+            disabled={isPlaying}
           />
         </div>
       </main>

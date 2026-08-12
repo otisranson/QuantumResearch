@@ -15,13 +15,23 @@ function GearIcon() {
 const baseBtn =
   'font-mono text-xs uppercase tracking-[0.15em] px-4 py-2.5 rounded-sm border transition-colors duration-100 disabled:cursor-not-allowed disabled:opacity-35';
 
-export default function Controls({ mode, onRecord, onEnd, onClear, onReset, onOpenSettings }) {
+export default function Controls({
+  mode,
+  isPlaying,
+  onRecord,
+  onEnd,
+  onClear,
+  onReset,
+  onPlay,
+  onStop,
+  onOpenSettings,
+}) {
   return (
     <div className="flex flex-wrap items-center gap-2.5">
       <button
         type="button"
         onClick={onRecord}
-        disabled={mode === MODES.RECORDING}
+        disabled={mode === MODES.RECORDING || isPlaying}
         className={`${baseBtn} border-rose text-rose hover:bg-rose/10`}
       >
         ● Record
@@ -29,7 +39,7 @@ export default function Controls({ mode, onRecord, onEnd, onClear, onReset, onOp
       <button
         type="button"
         onClick={onEnd}
-        disabled={mode !== MODES.RECORDING}
+        disabled={mode !== MODES.RECORDING || isPlaying}
         className={`${baseBtn} border-ink text-ink hover:bg-ink/5`}
       >
         ■ End
@@ -37,6 +47,7 @@ export default function Controls({ mode, onRecord, onEnd, onClear, onReset, onOp
       <button
         type="button"
         onClick={onClear}
+        disabled={isPlaying}
         className={`${baseBtn} border-ink-soft/50 text-ink-soft hover:bg-ink/5`}
       >
         Clear
@@ -44,9 +55,26 @@ export default function Controls({ mode, onRecord, onEnd, onClear, onReset, onOp
       <button
         type="button"
         onClick={onReset}
+        disabled={isPlaying}
         className={`${baseBtn} border-ink-soft/50 text-ink-soft hover:bg-ink/5`}
       >
         Reset
+      </button>
+      <button
+        type="button"
+        onClick={onPlay}
+        disabled={isPlaying || mode === MODES.RECORDING}
+        className={`${baseBtn} border-brass text-brass hover:bg-brass/10`}
+      >
+        ♪ Play Für Elise
+      </button>
+      <button
+        type="button"
+        onClick={onStop}
+        disabled={!isPlaying}
+        className={`${baseBtn} border-ink text-ink hover:bg-ink/5`}
+      >
+        ■ Stop
       </button>
       <button
         type="button"

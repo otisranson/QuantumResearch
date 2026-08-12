@@ -3,7 +3,7 @@ import PianoKey from './PianoKey';
 
 const BLACK_KEY_WIDTH_PCT = 8.5;
 
-export default function Piano({ keyBindings, activeKeyIds, onPress, onRelease }) {
+export default function Piano({ keyBindings, activeKeyIds, onPress, onRelease, disabled = false }) {
   return (
     <div className="relative flex h-40 w-full select-none gap-[2px] sm:h-48 md:h-56">
       {WHITE_KEYS.map((gateDef) => (
@@ -14,6 +14,7 @@ export default function Piano({ keyBindings, activeKeyIds, onPress, onRelease })
           isActive={activeKeyIds.has(gateDef.id)}
           onPress={onPress}
           onRelease={onRelease}
+          disabled={disabled}
         />
       ))}
 
@@ -27,6 +28,7 @@ export default function Piano({ keyBindings, activeKeyIds, onPress, onRelease })
             isActive={activeKeyIds.has(gateDef.id)}
             onPress={onPress}
             onRelease={onRelease}
+            disabled={disabled}
             style={{ left: `${leftPct}%`, width: `${BLACK_KEY_WIDTH_PCT}%` }}
           />
         );

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { MODES } from '../hooks/useQuantumCircuit';
 
 const WIRE_LABEL_WIDTH = 56;
@@ -104,6 +104,16 @@ export default function CircuitDiagram({ gates, mode }) {
   const wireEndX = width - 24;
   const wireStartX = WIRE_LABEL_WIDTH;
 
+  // Keep the newest gate in view as the circuit grows past the visible
+  // width -- matters most for MusicBox playback, where gates land faster
+  // than a reader could manually scroll to follow them.
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ left: el.scrollWidth, behavior: 'smooth' });
+  }, [gates.length]);
+
   return (
     <div className="relative rounded-sm border border-ink/15 bg-paper/70 bg-grain bg-grain-fine shadow-inner">
       {mode === MODES.LOCKED && (
@@ -117,7 +127,7 @@ export default function CircuitDiagram({ gates, mode }) {
           Recording
         </div>
       )}
-      <div className="overflow-x-auto">
+      <div ref={scrollRef} className="overflow-x-auto">
         <svg width={width} height={HEIGHT} role="img" aria-label="Quantum circuit diagram" className="block">
           <text x={16} y={Q0_Y + 5} className="fill-ink-soft font-mono font-semibold" fontSize={13}>
             q0
