@@ -245,6 +245,16 @@ both heard and appended to the circuit diagram, gate after gate in standard circ
 circuit in place. A gear-icon Settings panel lets you remap any of the twelve keys to any keyboard
 key, in case the default `A S D F G H J` / `W E T Y U` layout doesn't fit your hands.
 
+**♪ Play Für Elise** turns the piano into a music box: a hardcoded, ~20-second excerpt of the
+opening theme from Beethoven's "Für Elise" (public domain) plays itself back through the exact
+same Record pipeline a human would use — keys highlight and sound in sequence, gates land on the
+circuit diagram, and the diagram auto-scrolls to keep the newest one in view. Since the keyboard
+is a single fixed octave, every note collapses to its pitch class regardless of which octave it's
+actually in in the real piece, which is why the melody sounds *slightly* off despite being
+faithful note-for-note — an inherent trade-off of mapping a whole piece onto twelve gates rather
+than a limitation of the transcription itself. Manual keyboard/mouse input is disabled while it
+plays; ■ Stop cancels partway through and hands control back.
+
 No backend, no external UI libraries — just React, Tailwind, and the Web Audio API.
 
 ```bash
