@@ -35,7 +35,7 @@ from pathlib import Path
 
 import cirq
 
-OUTPUT_DIR = Path(__file__).parent / "output"
+OUTPUT_DIR = Path(__file__).parent / "output" / "encryption"
 
 
 def string_to_binary(text: str) -> str:

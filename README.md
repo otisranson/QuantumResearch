@@ -70,7 +70,7 @@ reported, not asserted, since a single ordering isn't guaranteed to beat a shuff
 ./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py
 ```
 
-Writes three plots to `quantum_prime_gaps/output/`, each tagged `_sim` since they come from the
+Writes three plots to `output/prime/`, each tagged `_sim` since they come from the
 exact statevector simulation: the raw `gap_sequence.png`, `amplitude_landscape_sim.png` (probability
 and phase per basis state), and `frequency_portrait_sim.png`, re-centered around zero the way a
 classical FFT magnitude spectrum is usually drawn. `--qubits N` changes the register size (and
@@ -169,10 +169,10 @@ forward prediction of gaps past 49 means anything yet — for either pathway.
 Change `--predict-steps` and `--top-k` to explore the forward horizon and truncation assumption;
 the extended wave (known gaps solid, classical prediction dashed red, quantum-circuit prediction
 dashed purple, boundary marked) is written to
-`quantum_prime_gaps/output/extended_wave_predicted.png`. A full run report —classical vs. quantum
+`output/prime/extended_wave_predicted.png`. A full run report —classical vs. quantum
 MAE, forward candidates for both pathways, which pathway produced each PNG this run, and any
 console warnings — is written automatically to
-`quantum_prime_gaps/output/7QUBIT_QUANTUM_PREDICTION.md` every time the script runs; it's
+`output/prime/7QUBIT_QUANTUM_PREDICTION.md` every time the script runs; it's
 overwritten each run rather than accumulating history.
 
 **Running the prediction circuit on real hardware.** `--hardware` submits the amplitude-encoded
@@ -188,7 +188,7 @@ the hardware-measured amplitude landscape is visibly flattened relative to the s
 peaks, not a subtle effect. This writes three more plots
 (`hardware_amplitude_landscape.png`, `hardware_vs_sim_comparison.png` — side-by-side panels,
 same y-axis scale, so the gap between them *is* the noise floor — and
-`hardware_frequency_portrait.png`) and a `quantum_prime_gaps/output/7QUBIT_HW_RESULTS.md` report
+`hardware_frequency_portrait.png`) and an `output/prime/7QUBIT_HW_RESULTS.md` report
 (job ID, backend, shots, transpiled depth, mitigation status, queue wait time, and the
 hardware-vs-simulated MAE), overwritten on every hardware run.
 
@@ -279,9 +279,9 @@ backend; otherwise it's always `least_busy`.
 ./.venv/bin/python quantum_encrypt.py --hardware
 ```
 
-Writes a run report to `output/HARDWARE_RUN.md` (backend, job IDs, queue depth, and the same
-message/key/ciphertext/decryption fields as the sample output above) — overwritten on every
-hardware run, like the hardware reports in `quantum_prime_gaps/`, with prior results living in git
+Writes a run report to `output/encryption/HARDWARE_RUN.md` (backend, job IDs, queue depth, and the
+same message/key/ciphertext/decryption fields as the sample output above) — overwritten on every
+hardware run, like the other hardware reports under `output/`, with prior results living in git
 history rather than accumulating in the file. Confirmed working end to end on `ibm_marrakesh`: the
 message encrypted with a hardware-measured key, decrypted correctly with that same key, and
 garbled with a second, independent hardware-measured key — the full one-time-pad round trip, on
@@ -318,6 +318,37 @@ Matches sent pulses:   True
 Decoded Morse: .... . .-.. .-.. --- / .-- --- .-. .-.. -..
 Decoded text:  'HELLO WORLD'
 ```
+
+`--hardware` transmits through a real IBM Quantum backend via Qiskit instead of Cirq's local
+simulator. Every qubit here is deterministically prepared in `|0>` or `|1>` by its `X` gate --
+never a superposition -- so unlike `quantum_encrypt.py --hardware`'s genuine QRNG, a noiseless
+read-back must exactly reproduce the sent pulse train; this is a literal transmission-fidelity
+test, and any mismatch is real gate/readout noise corrupting a bit that was never random to begin
+with. `--backend NAME` picks a specific backend; otherwise it's always `least_busy`. Same IBM
+Quantum API token setup as `quantum_prime_gaps/` and `quantum_encrypt.py` above. Writes a run
+report to `output/morse/HARDWARE_RUN.md`, one job per example message, overwritten on every
+hardware run.
+
+```bash
+./.venv/bin/python quantum_morse/quantum_morse.py --hardware
+```
+
+Confirmed working end to end on `ibm_marrakesh`, running all four built-in example messages (one
+hardware job each, 5-137 qubits, 1 shot). Every single message came back with at least one bit
+flip -- real noise, not a bug -- with effects ranging from invisible to message-corrupting
+depending on exactly which bit flipped:
+
+| Message | Bits flipped | Decoded text |
+|---|---:|---|
+| `'SOS HELP'` | 1 of 71 | `'SOS HELP'` -- flip didn't cross a symbol-boundary threshold, no visible effect |
+| `'HELLO'` | 1 of 49 | `'HELRO'` -- flip merged two of the 4th letter's runs, `.-..` (L) read back as `.-.` (R) |
+| `'CQ DE W1AW 73'` | 3 of 137 | `'Q DE W1AW 73'` -- flips corrupted the leading `C`'s code (`-.-.`) into `...-.`, which matches no letter and is silently dropped |
+| `'A'` | 1 of 5 | `'T'` -- the single gap bit between dot and dash flipped on, merging both into one continuous pulse, read back as a single dash |
+
+The smallest circuit (`'A'`, 5 qubits) took the worst relative hit -- consistent with the rest of
+this repo's hardware runs (see `quantum_prime_gaps/`'s noise-floor results above): there's no
+error correction here, so every flipped bit is visible directly in the decoded output rather than
+averaged away.
 
 ## `quantum_gravity/`
 

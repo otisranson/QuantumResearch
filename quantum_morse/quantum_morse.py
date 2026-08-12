@@ -19,12 +19,24 @@ A message is translated into Morse code, then into an ITU-timed pulse train
 inter-character gap = 3 units off, inter-word gap = 7 units off). That pulse
 train is "transmitted" by writing each bit onto a qubit with an X gate and
 reading it back with a measurement, then decoded back into text.
+
+By default this runs on Cirq's local statevector simulator, so the qubits round-trip
+the bits with no noise. `--hardware` instead transmits through a real IBM Quantum
+backend via Qiskit -- since every qubit here is deterministically prepared in |0> or
+|1> (never a superposition), a noiseless read-back must exactly match what was sent,
+so any mismatch on real hardware is genuine gate/readout noise corrupting a bit that
+was never random to begin with -- a literal transmission-fidelity test.
 """
 
 import argparse
+from dataclasses import dataclass, field
+from datetime import datetime
 from itertools import groupby
+from pathlib import Path
 
 import cirq
+
+OUTPUT_DIR = Path(__file__).parent.parent / "output" / "morse"
 
 MORSE_CODE = {
     "A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".",
@@ -107,13 +119,87 @@ def transmit_via_qubits(pulse_train: str, batch_size: int = 16) -> str:
     return "".join(received)
 
 
+@dataclass
+class HardwareTransmitRun:
+    """Metadata about a `transmit_via_qubits_hardware` call, kept separate from the
+    received bits so `write_hardware_report` can document what actually ran without
+    the transmit function needing to know about report-writing."""
+
+    backend_name: str
+    pending_jobs_at_selection: int
+    job_ids: list[str] = field(default_factory=list)
+    qubits_per_job: list[int] = field(default_factory=list)
+
+
+def transmit_via_qubits_hardware(pulse_train: str, backend_name: str | None = None) -> tuple[str, HardwareTransmitRun]:
+    """Write `pulse_train` onto qubits with X gates and read it back via measurement on
+    a real IBM Quantum backend, in batches sized to the backend's qubit count.
+
+    Unlike quantum_encrypt.py's hardware QRNG, these qubits aren't in superposition --
+    each one is deterministically prepared in |0> or |1>, so a noiseless read-back must
+    exactly match the sent chunk. One shot per qubit is still correct here, for a
+    different reason than the QRNG case: this reads a definite state, not a
+    distribution, so extra shots would only add repeated measurements of the same
+    single quantum event, not new information.
+
+    Qiskit writes measurement bitstrings with the highest classical bit leftmost (qubit
+    0 is the rightmost character) -- `bitstring[::-1]` undoes that so index i lines up
+    with the qubit that chunk[i] was written to, matching the local Cirq path's plain
+    left-to-right string order. Confirmed against `qiskit.primitives.StatevectorSampler`
+    on a known bit pattern before this ever touched real hardware.
+    """
+    from qiskit import QuantumCircuit, transpile
+    from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
+
+    service = QiskitRuntimeService()
+    backend = service.backend(backend_name) if backend_name else service.least_busy(min_num_qubits=1)
+    pending_jobs = backend.status().pending_jobs
+    print(f"Selected backend: {backend.name} (queue depth: {pending_jobs} pending jobs)")
+    run_info = HardwareTransmitRun(backend_name=backend.name, pending_jobs_at_selection=pending_jobs)
+
+    received = []
+    for start in range(0, len(pulse_train), backend.num_qubits):
+        chunk = pulse_train[start : start + backend.num_qubits]
+        qc = QuantumCircuit(len(chunk))
+        for i, bit in enumerate(chunk):
+            if bit == "1":
+                qc.x(i)
+        qc.measure_all()
+        transpiled = transpile(qc, backend=backend, optimization_level=3)
+
+        sampler = SamplerV2(mode=backend)
+        job = sampler.run([transpiled], shots=1)
+        print(f"Submitted job {job.job_id()} ({len(chunk)} qubits, 1 shot), waiting for results...")
+        result = job.result()
+        counts = result[0].data.meas.get_counts()
+        received.append(next(iter(counts))[::-1])
+        run_info.job_ids.append(job.job_id())
+        run_info.qubits_per_job.append(len(chunk))
+
+    return "".join(received), run_info
+
+
 EXAMPLE_MESSAGES = ["SOS HELP", "HELLO", "CQ DE W1AW 73", "A"]
 
 
-def run_message(message: str) -> str:
-    """Encode `message`, send it through the simulated qubits, decode it, and print each stage.
+@dataclass
+class MessageResult:
+    message: str
+    morse: str
+    pulse_train: str
+    received: str
+    matches: bool
+    decoded_morse: str
+    decoded_text: str
+    transmit_run: HardwareTransmitRun | None = None
 
-    Returns the decoded text so callers (or a script) can check it against the input.
+
+def run_message(message: str, hardware: bool = False, backend_name: str | None = None) -> MessageResult:
+    """Encode `message`, send it through the qubits (simulated, or real IBM Quantum
+    hardware if `hardware=True`), decode it, and print each stage.
+
+    Returns a `MessageResult` so callers (or a script) can check the decoded text
+    against the input, and so a hardware run's report can be written afterward.
     """
     print(f"Message: {message!r}")
 
@@ -126,10 +212,16 @@ def run_message(message: str) -> str:
     print(f"Pulse train: {pulse_train}")
 
     # The "device": each pulse bit is written onto a qubit with X and read back by measuring it.
-    received = transmit_via_qubits(pulse_train)
+    transmit_run = None
+    if hardware:
+        received, transmit_run = transmit_via_qubits_hardware(pulse_train, backend_name)
+    else:
+        received = transmit_via_qubits(pulse_train)
     print(f"\nRead back from qubits: {received}")
-    # True as long as the qubits round-trip the bits faithfully (no noise is simulated here).
-    print(f"Matches sent pulses:   {received == pulse_train}")
+    # On the simulator this is always True (no noise simulated); on real hardware a
+    # False here is genuine gate/readout noise, not a bug -- see the module docstring.
+    matches = received == pulse_train
+    print(f"Matches sent pulses:   {matches}")
 
     # Pulse train -> Morse -> text: the inverse of the two encoding steps above.
     decoded_morse = pulse_train_to_morse(received)
@@ -137,7 +229,53 @@ def run_message(message: str) -> str:
     print(f"\nDecoded Morse: {decoded_morse}")
     print(f"Decoded text:  {decoded_text!r}")
 
-    return decoded_text
+    return MessageResult(message, morse, pulse_train, received, matches, decoded_morse, decoded_text, transmit_run)
+
+
+def write_hardware_report(results: list[MessageResult]) -> Path:
+    """Write a report of a `--hardware` run to output/morse/HARDWARE_RUN.md, mirroring
+    the hardware-report convention used elsewhere in this repo (quantum_prime_gaps/,
+    quantum_encrypt.py): overwritten on every hardware run, with prior results living
+    in git history rather than accumulating in the file."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Quantum Morse transmission -- real hardware run report",
+        "",
+        "Generated automatically by `quantum_morse.py --hardware`. Overwritten on "
+        "every hardware run -- prior results live in git history, not accumulated here.",
+        "",
+        f"- **Timestamp:** {datetime.now().isoformat(timespec='seconds')}",
+        f"- **Readout error mitigation:** No (single-shot run per qubit -- see "
+        "`transmit_via_qubits_hardware` docstring for why extra shots wouldn't add information here)",
+        "",
+    ]
+    for result in results:
+        run = result.transmit_run
+        lines += [
+            f"## {result.message!r}",
+            "",
+            f"- **Backend:** {run.backend_name} (selected dynamically via `least_busy` "
+            "unless `--backend` overrides it)",
+            f"- **Job(s):** {', '.join(run.job_ids)} "
+            f"({', '.join(str(q) for q in run.qubits_per_job)} qubits, 1 shot each, "
+            f"queue depth {run.pending_jobs_at_selection} at selection)",
+            f"- **Matches sent pulses:** {result.matches}",
+            "",
+            "```",
+            f"Morse:       {result.morse}",
+            f"Pulse train: {result.pulse_train}",
+            "",
+            f"Read back from qubits: {result.received}",
+            f"Matches sent pulses:   {result.matches}",
+            "",
+            f"Decoded Morse: {result.decoded_morse}",
+            f"Decoded text:  {result.decoded_text!r}",
+            "```",
+            "",
+        ]
+    path = OUTPUT_DIR / "HARDWARE_RUN.md"
+    path.write_text("\n".join(lines))
+    return path
 
 
 def main() -> None:
@@ -150,17 +288,33 @@ def main() -> None:
         default=None,
         help="Text to send (letters, digits, spaces). Omit to run the built-in example messages instead.",
     )
+    parser.add_argument(
+        "--hardware",
+        action="store_true",
+        help="Transmit through a real IBM Quantum backend via Qiskit, instead of Cirq's local "
+        "simulator. Needs an IBM Quantum API token: set it via the QISKIT_IBM_TOKEN environment "
+        "variable, or save it once with QiskitRuntimeService.save_account(channel=..., token=...).",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        help="IBM Quantum backend name to use with --hardware (default: least busy).",
+    )
     args = parser.parse_args()
 
-    if args.message is not None:
-        run_message(args.message)
-        return
+    messages = [args.message] if args.message is not None else EXAMPLE_MESSAGES
+    if args.message is None:
+        print("No message given, running the built-in examples instead.\n")
 
-    print("No message given, running the built-in examples instead.\n")
-    for index, message in enumerate(EXAMPLE_MESSAGES):
+    results = []
+    for index, message in enumerate(messages):
         if index > 0:
             print()
-        run_message(message)
+        results.append(run_message(message, hardware=args.hardware, backend_name=args.backend))
+
+    if args.hardware:
+        report_path = write_hardware_report(results)
+        print(f"\nHardware run report written to {report_path}")
 
 
 if __name__ == "__main__":
