@@ -1,8 +1,15 @@
 # QuantumResearch
 
-Small proof-of-concept scripts exploring quantum computing, mostly with
-[Cirq](https://quantumai.google/cirq), Google's Python framework for building and simulating
-quantum circuits.
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![Built with Qiskit](https://img.shields.io/badge/built%20with-Qiskit-6929C4)](https://www.ibm.com/quantum/qiskit)
+[![Built with Cirq](https://img.shields.io/badge/built%20with-Cirq-4285F4)](https://quantumai.google/cirq)
+[![Runs on real IBM Quantum hardware](https://img.shields.io/badge/hardware-IBM%20Quantum-000000)](https://quantum.cloud.ibm.com/)
+
+Small proof-of-concept scripts exploring quantum computing — statevector simulators most of the
+way, real IBM Quantum hardware where it counts — built with [Cirq](https://quantumai.google/cirq)
+and [Qiskit](https://www.ibm.com/quantum/qiskit), Google's and IBM's Python frameworks for
+building, simulating, and running quantum circuits.
 
 ## ⭐ [`quantum_music/`](#quantum_music) — play the wavefunction
 
@@ -14,15 +21,29 @@ most immediate, tactile way in here to feel what a quantum circuit actually is: 
 read, but one you play. See the [full writeup below](#quantum_music) for how it works and how to
 run it.
 
+## ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — the prime gap wave, on real quantum hardware
+
+![Simulated vs. hardware amplitude landscape, same axis scale](quantum_prime_gaps/screenshots/hw/hardware_vs_sim_comparison.png)
+
+The first 50 primes' gap sequence, encoded onto qubits and read out through a Quantum Fourier
+Transform — simulated on the left, measured on a real IBM Quantum backend (`ibm_kingston`) on the
+right, same axis scale both panels. The simulated landscape has two sharp, unmistakable peaks; the
+hardware one is nearly flat. That gap between the panels *is* the noise floor, measured on a real
+chip, not estimated — the [full writeup below](#quantum_prime_gaps) covers the amplitude-encoding
+circuit, the classical-vs-quantum prediction pathway built on top of it, and exactly why the
+signal collapses on hardware (short version: arbitrary amplitude encoding onto `n` qubits costs
+exponentially more gates as `n` grows, and it shows — 907 transpiled gates for 7 qubits).
+
 ## Contents
 
-- [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
+- ⭐ [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
 - [`quantum_encrypt.py`](#quantum_encryptpy) — quantum random number generator one-time pad
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
 - [`quantum_gravity/`](#quantum_gravity) — emergent bulk geometry from a toy HaPPY code
 - [`path_visualizer/`](#path_visualizer) — Feynman path-integral field with a learned world model
-- [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence angle-encoded onto qubits,
-  read out through a QFT
+- ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence encoded onto qubits, read
+  out through a QFT, predicted two ways (classical FFT vs. an actual quantum circuit), and run on
+  real IBM Quantum hardware
 
 ## Prerequisites
 
@@ -135,7 +156,7 @@ Decoded text:  'HELLO WORLD'
 
 ## `quantum_prime_gaps/`
 
-![Amplitude landscape after QFT](quantum_prime_gaps/screenshots/amplitude_landscape_sim.png)
+![Amplitude landscape after QFT](quantum_prime_gaps/screenshots/sim/amplitude_landscape_sim.png)
 
 A quantum spectral analysis of the prime gap sequence, built on [Qiskit](https://www.ibm.com/quantum/qiskit).
 The first 50 primes are hardcoded and their 49 consecutive gaps (2, 1, 2, 2, 4, 2, ...) are
@@ -164,17 +185,22 @@ Writes three plots to `quantum_prime_gaps/output/`, each tagged `_sim` since the
 exact statevector simulation: the raw `gap_sequence.png`, `amplitude_landscape_sim.png` (probability
 and phase per basis state), and `frequency_portrait_sim.png`, re-centered around zero the way a
 classical FFT magnitude spectrum is usually drawn. `--qubits N` changes the register size (and
-therefore how many gap values land in each re-upload chunk).
+therefore how many gap values land in each re-upload chunk). `output/` is regenerated (and
+gitignored) on every run; a hand-picked snapshot of the interesting ones lives in
+`quantum_prime_gaps/screenshots/sim/` and `quantum_prime_gaps/screenshots/hw/`, tracked in git so
+the images in this README stay stable across runs.
+
+![Simulated vs. hardware amplitude landscape overlay for the landscape circuit](quantum_prime_gaps/screenshots/hw/amplitude_landscape_quantum_ibm_kingston.png)
 
 `--hardware` additionally runs the same circuit on a real IBM Quantum backend via
 `qiskit-ibm-runtime`'s Sampler primitive — pick one with `--backend NAME` or let it default to the
 least-busy device — and writes a fourth plot, `amplitude_landscape_quantum_<backend>.png`, overlaying
-the real measured probabilities against the simulated ones so noise is visible directly. Hardware
-only returns measurement counts, not the full complex statevector, so this overlay compares
-probabilities only — there's no hardware equivalent of the phase panel in the `_sim` plot. (As of
-the prediction-pathway rewrite below, `--hardware` also submits the prediction circuit and writes a
-second overlay, `amplitude_landscape_prediction_quantum_<backend>.png`, with the same
-probabilities-only caveat.)
+the real measured probabilities against the simulated ones so noise is visible directly (the
+`ibm_kingston` run above). Hardware only returns measurement counts, not the full complex
+statevector, so this overlay compares probabilities only — there's no hardware equivalent of the
+phase panel in the `_sim` plot. (As of the prediction-pathway rewrite below, `--hardware` also
+submits the prediction circuit and writes a second overlay,
+`amplitude_landscape_prediction_quantum_<backend>.png`, with the same probabilities-only caveat.)
 
 The amplitude landscape's probability bars are symmetric about the middle index (`P(k) ~= P(dim-k)`)
 because the pre-QFT state only ever goes through `Ry` and `CX` gates — no complex phases — so it's
@@ -249,6 +275,8 @@ forward prediction of gaps past 49 means anything yet — for either pathway.
 ./.venv/bin/python quantum_prime_gaps/quantum_prime_gaps.py --predict-steps 10 --top-k 3
 ```
 
+![Known gap wave with classical and quantum-circuit predictions past it](quantum_prime_gaps/screenshots/sim/extended_wave_predicted.png)
+
 Change `--predict-steps` and `--top-k` to explore the forward horizon and truncation assumption;
 the extended wave (known gaps solid, classical prediction dashed red, quantum-circuit prediction
 dashed purple, boundary marked) is written to
@@ -274,6 +302,15 @@ same y-axis scale, so the gap between them *is* the noise floor — and
 `hardware_frequency_portrait.png`) and a `quantum_prime_gaps/output/7QUBIT_HW_RESULTS.md` report
 (job ID, backend, shots, transpiled depth, mitigation status, queue wait time, and the
 hardware-vs-simulated MAE), overwritten on every hardware run.
+
+![Frequency portrait: which peaks survive hardware noise and which collapse into it](quantum_prime_gaps/screenshots/hw/hardware_frequency_portrait.png)
+
+The dominant simulated peak at frequency bin 0 is essentially gone in the hardware trace above —
+that's the 907-gate transpiled circuit's noise dominating the signal, exactly as the depth warning
+predicts. Job `d9tso90u5hac73agdrk0` on `ibm_kingston`, 4096 shots, measurement twirling enabled:
+hardware-vs-simulated MAE 0.0099, small as a number but visually total as a collapse — a documented
+negative result, not a bug, and the honest answer to "does this survive real hardware" for this
+particular encoding at this qubit count.
 
 One thing this can't do: report genuine hardware-measured candidate zones. A single Sampler
 measurement only yields Born-rule probabilities — phase is destroyed by measurement, and the
