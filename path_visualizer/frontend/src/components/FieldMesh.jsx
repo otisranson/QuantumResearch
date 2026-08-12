@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GRID_SIZE } from "../constants.js";
@@ -72,9 +72,13 @@ export default function FieldMesh({ field }) {
     for (let row = 0; row < GRID_SIZE; row++) {
       const srcRow = field[row];
       for (let col = 0; col < GRID_SIZE; col++) {
+        // Intentional in-place mutation of the GPU-backed buffer, not React state; see the useMemo comment above.
+        // eslint-disable-next-line react-hooks/immutability
         data[i++] = Math.round(srcRow[col] * 255);
       }
     }
+    // The three.js signal to re-upload the just-mutated buffer to the GPU, not a React-state write.
+    // eslint-disable-next-line react-hooks/immutability
     texture.needsUpdate = true;
     invalidate();
   }, [field, texture, invalidate]);

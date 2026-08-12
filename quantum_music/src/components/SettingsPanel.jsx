@@ -4,9 +4,10 @@ import { PIANO_KEYS } from '../constants/gates';
 export default function SettingsPanel({ open, bindings, onChangeBinding, onRestoreDefaults, onClose }) {
   const [listeningFor, setListeningFor] = useState(null);
 
-  useEffect(() => {
-    if (!open) setListeningFor(null);
-  }, [open]);
+  function handleClose() {
+    setListeningFor(null);
+    onClose();
+  }
 
   useEffect(() => {
     if (!listeningFor) return undefined;
@@ -31,7 +32,7 @@ export default function SettingsPanel({ open, bindings, onChangeBinding, onResto
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-4 backdrop-blur-[2px]"
-      onClick={onClose}
+      onClick={handleClose}
     >
       <div
         className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-sm border-2 border-ink bg-paper p-6 shadow-2xl sm:p-8"
@@ -46,7 +47,7 @@ export default function SettingsPanel({ open, bindings, onChangeBinding, onResto
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             aria-label="Close settings"
             className="rounded-full border border-ink-soft/40 px-2.5 py-1 font-mono text-sm text-ink-soft hover:border-rose hover:text-rose"
           >

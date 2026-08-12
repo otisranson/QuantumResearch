@@ -27,10 +27,11 @@ export function useKeyboardBindings(keyMap, { onPress, onRelease, enabled = true
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    const keys = heldKeys.current;
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      heldKeys.current.clear();
+      keys.clear();
     };
   }, [keyMap, onPress, onRelease, enabled]);
 }

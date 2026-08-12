@@ -110,7 +110,7 @@ def transmit_via_qubits(pulse_train: str, batch_size: int = 16) -> str:
     for start in range(0, len(pulse_train), batch_size):
         chunk = pulse_train[start : start + batch_size]
         qubits = cirq.LineQubit.range(len(chunk))
-        circuit = cirq.Circuit(cirq.X(q) for q, bit in zip(qubits, chunk) if bit == "1")
+        circuit = cirq.Circuit(cirq.X(q) for q, bit in zip(qubits, chunk, strict=True) if bit == "1")
         circuit.append(cirq.measure(*qubits, key="pulses"))
 
         result = simulator.run(circuit, repetitions=1)
@@ -245,7 +245,7 @@ def write_hardware_report(results: list[MessageResult]) -> Path:
         "every hardware run -- prior results live in git history, not accumulated here.",
         "",
         f"- **Timestamp:** {datetime.now().isoformat(timespec='seconds')}",
-        f"- **Readout error mitigation:** No (single-shot run per qubit -- see "
+        "- **Readout error mitigation:** No (single-shot run per qubit -- see "
         "`transmit_via_qubits_hardware` docstring for why extra shots wouldn't add information here)",
         "",
     ]

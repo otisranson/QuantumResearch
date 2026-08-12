@@ -43,6 +43,22 @@ python3 -m venv .venv
 its own `run.sh` that creates its own backend venv and installs its own frontend dependencies on
 first run, as described in their sections below.
 
+## Linting
+
+[`ruff`](https://docs.astral.sh/ruff/) covers every Python file in the repo from one config
+(`pyproject.toml`); each of the three React apps (`quantum_music/`, `quantum_gravity/frontend/`,
+`path_visualizer/frontend/`) has its own ESLint flat config, since they're independent npm
+projects with no shared workspace:
+
+```bash
+./.venv/bin/pip install -r requirements-dev.txt
+./.venv/bin/ruff check .
+
+cd quantum_music && npm run lint        # and the same in quantum_gravity/frontend, path_visualizer/frontend
+```
+
+`.github/workflows/lint.yml` runs both on every push and pull request.
+
 ## `quantum_prime_gaps/`
 
 ![Amplitude landscape after QFT](quantum_prime_gaps/screenshots/sim/amplitude_landscape_sim.png)

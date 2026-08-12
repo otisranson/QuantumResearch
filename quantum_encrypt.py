@@ -50,7 +50,7 @@ def binary_to_string(binary: str) -> str:
 
 
 def xor_bits(a: str, b: str) -> str:
-    return "".join("0" if x == y else "1" for x, y in zip(a, b))
+    return "".join("0" if x == y else "1" for x, y in zip(a, b, strict=True))
 
 
 def quantum_random_bits(n: int, batch_size: int = 16) -> str:
@@ -173,7 +173,7 @@ def write_hardware_report(
         f"- **Wrong-key job(s):** {', '.join(wrong_key_run.job_ids)} "
         f"({', '.join(str(q) for q in wrong_key_run.qubits_per_job)} qubits, 1 shot each, "
         f"queue depth {wrong_key_run.pending_jobs_at_selection} at selection)",
-        f"- **Readout error mitigation:** No (single-shot run -- see `quantum_random_bits_hardware` "
+        "- **Readout error mitigation:** No (single-shot run -- see `quantum_random_bits_hardware` "
         "docstring for why mitigation would work against the goal here)",
         "",
         "## Result",
