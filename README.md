@@ -19,20 +19,21 @@ building, simulating, and running quantum circuits.
 - ⭐ [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
 - [`quantum_encrypt.py`](#quantum_encryptpy) — quantum random number generator one-time pad
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
+- [`quantum_radio/`](#quantum_radio) — sparse 7-qubit listening circuit, rendered live as CRT static
 - [`quantum_gravity/`](#quantum_gravity) — emergent bulk geometry from a toy HaPPY code
 - [`path_visualizer/`](#path_visualizer) — Feynman path-integral field with a learned world model
 
 ## Prerequisites
 
-- **Python 3.10+** — for `quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`, and the
-  backends of `quantum_gravity/` and `path_visualizer/`.
+- **Python 3.10+** — for `quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`,
+  `quantum_radio/`, and the backends of `quantum_gravity/` and `path_visualizer/`.
 - **Node.js 18+ with npm** — needed for `quantum_music/` and the frontends of `quantum_gravity/`
   and `path_visualizer/`; the plain Python scripts don't touch it.
 
 ## Setup
 
 This installs the dependencies for the plain scripts below
-(`quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`):
+(`quantum_encrypt.py`, `quantum_morse/`, `quantum_prime_gaps/`, `quantum_radio/`):
 
 ```bash
 python3 -m venv .venv
@@ -377,6 +378,48 @@ The smallest circuit (`'A'`, 5 qubits) took the worst relative hit -- consistent
 this repo's hardware runs (see `quantum_prime_gaps/`'s noise-floor results above): there's no
 error correction here, so every flipped bit is visible directly in the decoded output rather than
 averaged away.
+
+## `quantum_radio/`
+
+A sparse listening experiment rather than a computation: 7 qubits get a Hadamard each (full
+superposition), a single `CX` chain `0→1→2→3→4→5→6` (one thread of entanglement across the whole
+register), then an `RZ(pi * phi)` phase kick on every qubit, where `phi` is the golden ratio —
+chosen for its place at the boundary between order and emergent structure in natural systems,
+philosophically consistent with a circuit built to listen at the boundary between classical and
+quantum behavior. The circuit is run twice: once on
+[`AerSimulator`](https://qiskit.github.io/qiskit-aer/) as the control (a classical computer
+pretending), once on a real IBM Quantum backend as the instrument (genuine stochasticity,
+decoherence included). Wherever the two 8192-shot output distributions diverge — measured as
+[total variation distance](https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures),
+plus any basis states the hardware produced that the ideal circuit gives zero probability — is
+where the hardware is contributing something the simulator can't account for.
+
+```bash
+./.venv/bin/python quantum_radio/quantum_radio.py
+```
+
+Runs the `AerSimulator` control on its own and writes `quantum_radio_results.json`,
+`quantum_radio_plot.png` (both distributions as side-by-side histograms), and
+`quantum_radio_report.md` into `quantum_radio/` itself, next to the two source files — not under
+the repo's shared `output/`, since `quantum_radio_crt.html` (below) loads its JSON from the same
+directory it lives in.
+
+`--hardware` additionally submits the circuit to `ibm_kingston` (chosen deliberately, not the
+least-busy backend — `--backend NAME` overrides it) and fills in the real comparison: TVD, novel
+hardware-only basis states, and the divergence table in the report. Same IBM Quantum API token
+setup as the other hardware-capable scripts above.
+
+```bash
+./.venv/bin/python quantum_radio/quantum_radio.py --hardware
+```
+
+`quantum_radio_crt.html` is a standalone canvas renderer, no build step or dependencies — open it
+directly, or serve the directory and open it in a browser. It reads `quantum_radio_results.json`
+and draws two amber-labeled green-phosphor panels, HARDWARE and SIMULATION, mapping all 128
+possible 7-bit outcomes onto an 11×12 pixel grid. Every frame is sampled fresh and independently
+from the actual shot distribution — no interpolation or memory of the previous frame, with a hard
+black cut between each one — so the underlying probability landscape only becomes visible as a
+pattern in the viewer's eye across many frames, never in any single one.
 
 ## `quantum_gravity/`
 

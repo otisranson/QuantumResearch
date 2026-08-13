@@ -9,4 +9,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["quantum_encrypt", "quantum_morse", "quantum_prime_gaps"]
+known-first-party = ["quantum_encrypt", "quantum_morse", "quantum_prime_gaps", "quantum_radio"]

@@ -1,0 +1,229 @@
+<!--
+  Each frame is an independent collapse event.
+  There is no thread between them.
+  The pattern is yours.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quantum Radio</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000000;
+    color: #ffb000;
+    font-family: "Courier New", Courier, monospace;
+    height: 100%;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    min-height: 100vh;
+  }
+
+  .panels {
+    display: flex;
+    flex-direction: row;
+    gap: 3rem;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .panel-label {
+    color: #ffb000;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 1.1rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+
+  canvas {
+    display: block;
+    background: #000000;
+    image-rendering: pixelated;
+    border-radius: 0;
+  }
+
+  .readout {
+    color: #ffb000;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 1rem;
+    letter-spacing: 0.15em;
+    text-align: center;
+  }
+
+  .status {
+    color: #ffb000;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.9rem;
+    letter-spacing: 0.1em;
+    opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-label">Hardware</div>
+      <canvas id="hardwareCanvas"></canvas>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Simulation</div>
+      <canvas id="simCanvas"></canvas>
+    </div>
+  </div>
+
+  <div class="readout" id="tvdReadout">TVD: --</div>
+  <div class="status" id="shotCounter">SHOT 0000 / 8192</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const N_QUBITS = 7;
+  const N_STATES = 1 << N_QUBITS; // 128
+  const GRID_COLS = 11;
+  const GRID_ROWS = 12; // 11*12 = 132 cells, 4 unused -- rounding is fine
+  const CELL_SIZE = 10; // CSS pixels per cell edge (minimum 8x8 required)
+  const PHOSPHOR = [0, 255, 65]; // #00ff41
+  const CONTENT_FPS = 12;
+  const TICK_MS = 1000 / (CONTENT_FPS * 2); // alternate black / content -> 12 content frames/sec
+
+  const hardwareCanvas = document.getElementById("hardwareCanvas");
+  const simCanvas = document.getElementById("simCanvas");
+  const tvdReadout = document.getElementById("tvdReadout");
+  const shotCounter = document.getElementById("shotCounter");
+
+  for (const canvas of [hardwareCanvas, simCanvas]) {
+    canvas.width = GRID_COLS * CELL_SIZE;
+    canvas.height = GRID_ROWS * CELL_SIZE;
+  }
+  const hardwareCtx = hardwareCanvas.getContext("2d");
+  const simCtx = simCanvas.getContext("2d");
+
+  function countsToProbabilities(counts) {
+    const probabilities = new Float64Array(N_STATES);
+    if (!counts) return probabilities;
+    let total = 0;
+    for (const key in counts) total += counts[key];
+    if (total === 0) return probabilities;
+    for (const key in counts) {
+      const index = parseInt(key, 2);
+      probabilities[index] = counts[key] / total;
+    }
+    return probabilities;
+  }
+
+  function drawBlank(ctx) {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  }
+
+  // Each call is one independent draw from the actual shot distribution -- no
+  // reference to any prior frame, no smoothing, no memory. Every basis state
+  // gets its own fresh random brightness sample, weighted by its own measured
+  // probability relative to the panel's brightest state.
+  function drawFrame(ctx, probabilities, maxProbability) {
+    drawBlank(ctx);
+    for (let index = 0; index < N_STATES; index++) {
+      const weight = maxProbability > 0 ? probabilities[index] / maxProbability : 0;
+      if (weight <= 0) continue;
+
+      const brightness = Math.random() * weight; // 0..1, the "independent collapse event"
+      const col = index % GRID_COLS;
+      const row = Math.floor(index / GRID_COLS);
+
+      const r = Math.round(PHOSPHOR[0] * brightness);
+      const g = Math.round(PHOSPHOR[1] * brightness);
+      const b = Math.round(PHOSPHOR[2] * brightness);
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    }
+    drawScanlines(ctx);
+  }
+
+  function drawScanlines(ctx) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
+    for (let row = 0; row < GRID_ROWS; row += 2) {
+      ctx.fillRect(0, row * CELL_SIZE, ctx.canvas.width, CELL_SIZE);
+    }
+  }
+
+  function drawNoDataLabel(ctx) {
+    ctx.fillStyle = "#ffb000";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("NO DATA", ctx.canvas.width / 2, ctx.canvas.height / 2);
+  }
+
+  async function main() {
+    let data;
+    try {
+      const response = await fetch("quantum_radio_results.json");
+      data = await response.json();
+    } catch (err) {
+      tvdReadout.textContent = "TVD: -- (could not load quantum_radio_results.json)";
+      drawBlank(hardwareCtx);
+      drawBlank(simCtx);
+      drawNoDataLabel(hardwareCtx);
+      drawNoDataLabel(simCtx);
+      return;
+    }
+
+    const shots = data.shots || 8192;
+    const hasHardware = !!data.hardware_counts;
+
+    const simProbabilities = countsToProbabilities(data.simulator_counts);
+    const hardwareProbabilities = countsToProbabilities(data.hardware_counts);
+    const simMax = Math.max(...simProbabilities);
+    const hardwareMax = Math.max(...hardwareProbabilities);
+
+    tvdReadout.textContent =
+      typeof data.total_variation_distance === "number"
+        ? `TVD: ${data.total_variation_distance.toFixed(4)}`
+        : "TVD: -- (no hardware run)";
+
+    let shot = 0;
+    let showingBlank = true;
+
+    function tick() {
+      if (showingBlank) {
+        drawBlank(hardwareCtx);
+        drawBlank(simCtx);
+      } else {
+        if (hasHardware) {
+          drawFrame(hardwareCtx, hardwareProbabilities, hardwareMax);
+        } else {
+          drawBlank(hardwareCtx);
+          drawNoDataLabel(hardwareCtx);
+        }
+        drawFrame(simCtx, simProbabilities, simMax);
+
+        shot = (shot + 1) % (shots + 1);
+        shotCounter.textContent = `SHOT ${String(shot).padStart(4, "0")} / ${shots}`;
+      }
+      showingBlank = !showingBlank;
+    }
+
+    tick();
+    setInterval(tick, TICK_MS);
+  }
+
+  main();
+})();
+</script>
+
+</body>
+</html>
