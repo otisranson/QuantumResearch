@@ -48,6 +48,7 @@ import numpy as np
 from qiskit import QuantumCircuit, transpile
 
 OUTPUT_DIR = Path(__file__).parent  # quantum_radio_crt.html fetches its JSON from this same directory
+JOB_STATE_PATH = OUTPUT_DIR / "quantum_radio_job.json"  # tracks a submitted-but-not-yet-fetched hardware job
 
 N_QUBITS = 7
 SHOTS = 8192
@@ -93,9 +94,11 @@ class HardwareRunMetadata:
     pending_jobs_at_selection: int
 
 
-def run_hardware(circuit: QuantumCircuit, shots: int, backend_name: str) -> tuple[dict[str, int], HardwareRunMetadata]:
-    """Run the circuit on a real IBM Quantum backend: the instrument, not the control.
-    Genuine quantum mechanical substrate, genuine stochasticity, decoherence included."""
+def submit_hardware(circuit: QuantumCircuit, shots: int, backend_name: str) -> HardwareRunMetadata:
+    """Submit the circuit to a real IBM Quantum backend and return immediately --
+    does not wait for the result. Queue times are outside our control and can run
+    from minutes to many hours, so nothing here blocks on job.result(); the job
+    is fetched later, non-blockingly, via --check-job."""
     from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 
     service = QiskitRuntimeService()
@@ -106,12 +109,76 @@ def run_hardware(circuit: QuantumCircuit, shots: int, backend_name: str) -> tupl
     transpiled = transpile(circuit, backend=backend, optimization_level=3)
     sampler = SamplerV2(mode=backend)
     job = sampler.run([transpiled], shots=shots)
-    print(f"Submitted job {job.job_id()} ({shots} shots), waiting for results...")
-    result = job.result()
-    counts = result[0].data.c.get_counts()
+    print(f"Submitted job {job.job_id()} ({shots} shots). Not waiting -- run with --check-job later to fetch results.")
 
-    metadata = HardwareRunMetadata(backend_name=backend.name, job_id=job.job_id(), pending_jobs_at_selection=pending_jobs)
-    return dict(counts), metadata
+    return HardwareRunMetadata(backend_name=backend.name, job_id=job.job_id(), pending_jobs_at_selection=pending_jobs)
+
+
+def save_job_state(meta: HardwareRunMetadata) -> None:
+    JOB_STATE_PATH.write_text(
+        json.dumps(
+            {
+                "backend_name": meta.backend_name,
+                "job_id": meta.job_id,
+                "pending_jobs_at_selection": meta.pending_jobs_at_selection,
+                "submitted_at": datetime.now().isoformat(timespec="seconds"),
+            },
+            indent=2,
+        )
+    )
+
+
+def load_job_state() -> dict | None:
+    if not JOB_STATE_PATH.exists():
+        return None
+    return json.loads(JOB_STATE_PATH.read_text())
+
+
+def check_job(circuit: QuantumCircuit, shots: int) -> None:
+    """Poll a previously submitted hardware job without blocking. If it has
+    finished, fetch the results and write the full comparison output; otherwise
+    report its status and return immediately."""
+    from qiskit_ibm_runtime import QiskitRuntimeService
+
+    state = load_job_state()
+    if state is None:
+        print(f"No pending hardware job found ({JOB_STATE_PATH.name} missing). Submit one with --hardware.")
+        return
+
+    service = QiskitRuntimeService()
+    job = service.job(state["job_id"])
+    print(f"Job {state['job_id']} on {state['backend_name']}: {job.status()}")
+
+    if not job.done():
+        print("Still running -- check back later with --check-job.")
+        return
+
+    result = job.result()
+    hardware_counts = dict(result[0].data.c.get_counts())
+    metadata = HardwareRunMetadata(
+        backend_name=state["backend_name"],
+        job_id=state["job_id"],
+        pending_jobs_at_selection=state["pending_jobs_at_selection"],
+    )
+    print(f"{len(hardware_counts)} distinct basis states observed on hardware.")
+
+    print("\nRunning on AerSimulator (control)...")
+    sim_counts = run_simulator(circuit, shots)
+    print(f"{len(sim_counts)} distinct basis states observed in simulation.")
+
+    tvd = total_variation_distance(hardware_counts, sim_counts, N_QUBITS)
+    novel_states = novel_hardware_states(sim_counts, hardware_counts)
+    print(f"\nTotal variation distance (hardware vs. simulator): {tvd:.4f}")
+
+    plot_path = plot_comparison(sim_counts, hardware_counts, metadata.backend_name)
+    json_path = save_results_json(sim_counts, hardware_counts, metadata, tvd, novel_states)
+    report_path = write_report(sim_counts, hardware_counts, metadata, tvd, novel_states)
+
+    print(f"\nPlot:   {plot_path}")
+    print(f"JSON:   {json_path}")
+    print(f"Report: {report_path}")
+
+    JOB_STATE_PATH.unlink()
 
 
 def counts_to_probabilities(counts: dict[str, int], n_qubits: int) -> np.ndarray:
@@ -208,6 +275,7 @@ def write_report(
     hardware_meta: HardwareRunMetadata | None,
     tvd: float | None,
     novel_states: list[str],
+    pending_meta: HardwareRunMetadata | None = None,
 ) -> Path:
     lines = [
         "# Quantum Radio -- divergence report",
@@ -223,9 +291,17 @@ def write_report(
     ]
 
     if hardware_counts is None:
+        if pending_meta is not None:
+            lines += [
+                f"Hardware job `{pending_meta.job_id}` submitted to {pending_meta.backend_name} and still",
+                "pending -- run with `--check-job` to fetch results once it completes.",
+            ]
+        else:
+            lines += [
+                "No hardware run this time -- pass `--hardware` to submit to a real IBM",
+                "Quantum backend (non-blocking; fetch results later with `--check-job`).",
+            ]
         lines += [
-            "No hardware run this time -- pass `--hardware` to submit to a real IBM",
-            "Quantum backend and produce a real hardware/simulator comparison.",
             "",
             "## Simulator distribution only",
             "",
@@ -286,9 +362,16 @@ def main() -> None:
     parser.add_argument(
         "--hardware",
         action="store_true",
-        help="Also run the circuit on a real IBM Quantum backend via Qiskit, and compare it against "
-        "the simulator run. Needs an IBM Quantum API token: set it via the QISKIT_IBM_TOKEN "
-        "environment variable, or save it once with QiskitRuntimeService.save_account(channel=..., token=...).",
+        help="Submit the circuit to a real IBM Quantum backend via Qiskit and return immediately -- "
+        "does not wait in the queue. Fetch the result later with --check-job. Needs an IBM Quantum "
+        "API token: set it via the QISKIT_IBM_TOKEN environment variable, or save it once with "
+        "QiskitRuntimeService.save_account(channel=..., token=...).",
+    )
+    parser.add_argument(
+        "--check-job",
+        action="store_true",
+        help="Check the hardware job previously submitted with --hardware. If it has finished, fetch "
+        "the results and write the full comparison; otherwise report its status and exit. Never blocks.",
     )
     parser.add_argument(
         "--backend",
@@ -297,44 +380,39 @@ def main() -> None:
         "deliberately -- not the least-busy backend).",
     )
     args = parser.parse_args()
+    if args.hardware and args.check_job:
+        parser.error("--hardware and --check-job are mutually exclusive")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     circuit = build_circuit()
+
+    if args.check_job:
+        check_job(circuit, SHOTS)
+        return
 
     print(f"Circuit: {N_QUBITS} qubits, H + CNOT chain + RZ(pi*phi={PHI:.6f}), {SHOTS} shots")
     print("\nRunning on AerSimulator (control)...")
     sim_counts = run_simulator(circuit, SHOTS)
     print(f"{len(sim_counts)} distinct basis states observed in simulation.")
 
-    hardware_counts = None
-    hardware_meta = None
-    tvd = None
-    novel_states: list[str] = []
-
+    pending_meta = None
     if args.hardware:
-        print(f"\nRunning on {args.backend} (instrument)...")
-        hardware_counts, hardware_meta = run_hardware(circuit, SHOTS, args.backend)
-        print(f"{len(hardware_counts)} distinct basis states observed on hardware.")
-
-        tvd = total_variation_distance(hardware_counts, sim_counts, N_QUBITS)
-        novel_states = novel_hardware_states(sim_counts, hardware_counts)
-        print(f"\nTotal variation distance (hardware vs. simulator): {tvd:.4f}")
-        if novel_states:
-            print(f"{len(novel_states)} basis state(s) appeared on hardware with zero probability in simulation:")
-            for state in novel_states:
-                print(f"  {state} ({hardware_counts[state]} shots)")
-        else:
-            print("No basis states appeared on hardware that weren't already possible in simulation.")
+        print(f"\nSubmitting to {args.backend} (instrument)...")
+        pending_meta = submit_hardware(circuit, SHOTS, args.backend)
+        save_job_state(pending_meta)
     else:
-        print("\n--hardware not set: simulator-only run. Pass --hardware for the real comparison.")
+        print("\n--hardware not set: simulator-only run. Pass --hardware to submit a hardware comparison.")
 
-    plot_path = plot_comparison(sim_counts, hardware_counts, hardware_meta.backend_name if hardware_meta else None)
-    json_path = save_results_json(sim_counts, hardware_counts, hardware_meta, tvd, novel_states)
-    report_path = write_report(sim_counts, hardware_counts, hardware_meta, tvd, novel_states)
+    plot_path = plot_comparison(sim_counts, None, None)
+    json_path = save_results_json(sim_counts, None, None, None, [])
+    report_path = write_report(sim_counts, None, None, None, [], pending_meta=pending_meta)
 
     print(f"\nPlot:   {plot_path}")
     print(f"JSON:   {json_path}")
     print(f"Report: {report_path}")
+    if pending_meta is not None:
+        print(f"\nHardware job {pending_meta.job_id} submitted to {pending_meta.backend_name}.")
+        print("Run `quantum_radio.py --check-job` later to fetch results -- this will not block.")
 
 
 if __name__ == "__main__":

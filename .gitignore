@@ -5,3 +5,4 @@ node_modules/
 dist/
 *.pt
 output/prime/*.png
+quantum_evolve/openevolve_output/

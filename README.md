@@ -16,6 +16,9 @@ building, simulating, and running quantum circuits.
 - ⭐ [`quantum_prime_gaps/`](#quantum_prime_gaps) — prime gap sequence encoded onto qubits, read
   out through a QFT, predicted two ways (classical FFT vs. an actual quantum circuit), and run on
   real IBM Quantum hardware
+- [`quantum_evolve/`](#quantum_evolve) — [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)
+  evolving `quantum_prime_gaps/`'s frequency-reconstruction step against its own backward-verification
+  benchmark
 - ⭐ [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
 - [`quantum_encrypt.py`](#quantum_encryptpy) — quantum random number generator one-time pad
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
@@ -226,6 +229,42 @@ for one run. Instead, `7QUBIT_HW_RESULTS.md` reports a clearly-labeled hybrid �
 *magnitude* combined with simulator *phase* — which answers only the narrower question of whether
 readout noise alone moves the zones, never presented as an unqualified hardware result.
 
+## `quantum_evolve/`
+
+An [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) experiment aimed at a
+specific, documented negative result in `quantum_prime_gaps/`: on backward verification (predicting
+primes 41–50's gaps from primes 1–40's), neither the classical (`np.fft.fft`) nor the quantum-circuit
+(`quantum_fft`) prediction pathway currently beats two naive baselines — repeat the mean known gap,
+repeat the last known gap — at any truncation level. Both pathways share one function for the actual
+forecasting step, `_dft_reconstruct`: keep the `top_k` strongest frequency components, zero the
+rest, evaluate the continuous-time inverse DFT past the known window. `quantum_evolve/initial_program.py`
+seeds OpenEvolve with that exact function (renamed `reconstruct`, wrapped in an `EVOLVE-BLOCK`) and
+lets an LLM iterate on it — different truncation strategies, soft shrinkage instead of hard top-k,
+windowing, baseline blending — anything that's still a mathematically valid inverse DFT.
+
+`quantum_evolve/evaluator.py` scores each candidate on exactly the benchmark above, run at five
+`top_k` values (1, 2, 3, 5, 8) against *both* pathways — the score rewards the average margin over
+baseline but is capped by the worst single condition, so a candidate can't win by overfitting one
+`(pathway, top_k)` pair while quietly getting worse everywhere else. A hard gate runs first, mirroring
+`quantum_prime_gaps.py`'s own `verify_extrapolation_roundtrip`: called with `top_k=None`, a candidate's
+`reconstruct` must exactly reproduce the known values it was built from, or it scores zero outright,
+whatever its forecast MAE looks like. `quantum_fft` itself (the quantum-circuit spectrum) is not
+evolved — it's a fixed, separately-verified exact Statevector simulation, so every evaluation is
+free of IBM Quantum hardware or queue time.
+
+```bash
+./.venv/bin/pip install -r quantum_evolve/requirements.txt
+export OPENAI_API_KEY="your-gemini-api-key"  # config.yaml defaults to Gemini's free tier via its OpenAI-compatible endpoint
+./.venv/bin/openevolve-run quantum_evolve/initial_program.py quantum_evolve/evaluator.py \
+  --config quantum_evolve/config.yaml --output quantum_evolve/openevolve_output
+```
+
+Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey), or point
+`config.yaml`'s `llm.api_base`/model names at any other OpenAI-compatible provider. Every generation
+costs a real LLM call, so `max_iterations` (100 by default) is a direct cost/runtime knob, not just a
+quality one. Results land in `quantum_evolve/openevolve_output/` (gitignored) — `best/best_program.py`
+is the highest-scoring candidate found, alongside its metrics and the full evolution log.
+
 ## `quantum_music/`
 
 ![Quantum Music](quantum_music/screenshots/screenshot.png)
@@ -405,12 +444,22 @@ the repo's shared `output/`, since `quantum_radio_crt.html` (below) loads its JS
 directory it lives in.
 
 `--hardware` additionally submits the circuit to `ibm_kingston` (chosen deliberately, not the
-least-busy backend — `--backend NAME` overrides it) and fills in the real comparison: TVD, novel
-hardware-only basis states, and the divergence table in the report. Same IBM Quantum API token
-setup as the other hardware-capable scripts above.
+least-busy backend — `--backend NAME` overrides it) and returns immediately — it does not wait for
+the job to run. IBM Quantum queues can run from minutes to many hours (a `--hardware` run once sat
+`QUEUED` overnight before it was cancelled the next morning), so nothing here blocks on the job's
+result; the job ID and backend are saved to `quantum_radio_job.json` for the next step to pick up.
 
 ```bash
 ./.venv/bin/python quantum_radio/quantum_radio.py --hardware
+```
+
+`--check-job` polls that saved job non-blockingly: if it's still queued or running, it prints the
+status and exits immediately; once it's done, it fetches the results, fills in the real comparison
+(TVD, novel hardware-only basis states, the divergence table), and writes the same three output
+files. Same IBM Quantum API token setup as the other hardware-capable scripts above.
+
+```bash
+./.venv/bin/python quantum_radio/quantum_radio.py --check-job
 ```
 
 `quantum_radio_crt.html` is a standalone canvas renderer, no build step or dependencies — open it
