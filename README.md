@@ -449,7 +449,7 @@ sizes don't clobber each other's results; `--qubits` is capped at 20, since `plo
 renders one point per basis state (2**qubits of them) and matplotlib's rasterizer hard-fails on
 that many past roughly this size.
 
-`--hardware` additionally submits the circuit to `ibm_kingston` (chosen deliberately, not the
+`--hardware` additionally submits the circuit to `ibm_marrakesh` (chosen deliberately, not the
 least-busy backend — `--backend NAME` overrides it) and returns immediately — it does not wait for
 the job to run. IBM Quantum queues can run from minutes to many hours (a `--hardware` run once sat
 `QUEUED` overnight before it was cancelled the next morning), so nothing here blocks on the job's

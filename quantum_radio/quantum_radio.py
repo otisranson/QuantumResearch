@@ -481,8 +481,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--backend",
-        default="ibm_kingston",
-        help="IBM Quantum backend name to use with --hardware (default: ibm_kingston, chosen "
+        default="ibm_marrakesh",
+        help="IBM Quantum backend name to use with --hardware (default: ibm_marrakesh, chosen "
         "deliberately -- not the least-busy backend).",
     )
     parser.add_argument(
