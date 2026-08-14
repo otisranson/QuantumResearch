@@ -168,9 +168,12 @@
   // visibly drags. 16 qubits (65,536 cells) is the largest that stays smooth.
   const QUBIT_COUNTS = [2, 10, 12, 14, 16];
 
-  // Canvas resolution is set to EXACTLY (cols, rows), displayed at that native
-  // size with no CSS scaling -- one real screen pixel per basis state, so the
-  // "resolution" genuinely is the grid size.
+  // Canvas resolution is set to EXACTLY (cols, rows) -- one basis state per
+  // intrinsic pixel -- then scaled up via CSS (image-rendering: pixelated) so
+  // each state reads as a visible chunky block instead of a single screen
+  // pixel. See buildRowDom for how CELL_SCALE_TARGET_PX turns into a per-row
+  // integer scale.
+  const CELL_SCALE_TARGET_PX = 512;
   const PHOSPHOR = [0, 255, 65]; // #00ff41
   const FPS = 20;
   const TICK_MS = 1000 / FPS;
@@ -301,17 +304,22 @@
 
     const nStates = 1 << nQubits;
     const { cols, rows } = gridDimsFor(nStates);
-    // Native resolution == grid size exactly, with NO CSS magnification -- one
-    // real screen pixel per basis state. (Stretching a small canvas back up via
-    // CSS would just recreate the same chunky blocks through nearest-neighbor
-    // scaling, even with image-rendering: pixelated -- displaying it at its true
-    // size is what actually removes that chunkiness.) This also naturally makes
-    // panels differ in physical size by qubit count -- 2 qubits is a 2x2 dot,
-    // 16 qubits a 256x256 image -- rather than force-fitting every row to the
-    // same displayed size.
+    // Canvas resolution (canvas.width/height) stays exactly (cols, rows) -- one
+    // intrinsic pixel per basis state, unchanged from how drawFrame addresses
+    // cells. Display size is scaled up separately via CSS with
+    // image-rendering: pixelated (see stylesheet), so each cell renders as a
+    // sharp-edged block rather than a single screen pixel. CELL_SCALE_TARGET_PX
+    // picks the scale per row so every panel lands near the same displayed
+    // size regardless of qubit count -- 2 qubits gets a few huge blocks, 16
+    // qubits gets many small-but-still-chunky ones -- clamped so neither a
+    // tiny register (huge per-cell scale) nor a large one (scale floors at 1)
+    // goes to an extreme.
+    const scale = Math.max(2, Math.min(32, Math.round(CELL_SCALE_TARGET_PX / Math.max(cols, rows))));
     for (const canvas of [hardwareCanvas, simCanvas]) {
       canvas.width = cols;
       canvas.height = rows;
+      canvas.style.width = `${cols * scale}px`;
+      canvas.style.height = `${rows * scale}px`;
     }
 
     return { row, hardwareCanvas, simCanvas, hardwareNoData, context, readout, status, nStates, cols, rows };
