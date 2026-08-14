@@ -22,7 +22,8 @@ building, simulating, and running quantum circuits.
 - ⭐ [`quantum_music/`](#quantum_music) — a playable piano that builds a quantum circuit as you play
 - [`quantum_encrypt.py`](#quantum_encryptpy) — quantum random number generator one-time pad
 - [`quantum_morse/quantum_morse.py`](#quantum_morsequantum_morsepy) — Morse code over qubits
-- [`quantum_radio/`](#quantum_radio) — sparse 7-qubit listening circuit, rendered live as CRT static
+- [`quantum_radio/`](#quantum_radio) — sparse listening circuit swept across qubit counts, rendered
+  live as CRT phosphor or a topographic map, or plotted as a topographic PNG
 - [`quantum_gravity/`](#quantum_gravity) — emergent bulk geometry from a toy HaPPY code
 - [`path_visualizer/`](#path_visualizer) — Feynman path-integral field with a learned world model
 
@@ -420,6 +421,8 @@ averaged away.
 
 ## `quantum_radio/`
 
+![Quantum Radio, live topographic mode: 12-qubit hardware vs. simulator, hillshaded and percentile-normalized](quantum_radio/screenshots/screenshot.png)
+
 A sparse listening experiment rather than a computation: 10 qubits get a Hadamard each (full
 superposition), a single `CX` chain `0→1→2→...→9` (one thread of entanglement across the whole
 register), then an `RZ(pi * phi)` phase kick on every qubit, where `phi` is the golden ratio —
@@ -441,13 +444,22 @@ separated out.
 ```
 
 Runs the `AerSimulator` control on its own and writes `quantum_radio_results_10q.json`,
-`quantum_radio_plot_10q.png` (both distributions as side-by-side fill plots), and
-`quantum_radio_report_10q.md` into `quantum_radio/` itself, next to the two source files — not
-under the repo's shared `output/`, since `quantum_radio_crt.html` (below) loads its JSON from the
-same directory it lives in. Every output filename is tagged with `--qubits` so different register
-sizes don't clobber each other's results; `--qubits` is capped at 20, since `plot_comparison`
-renders one point per basis state (2**qubits of them) and matplotlib's rasterizer hard-fails on
-that many past roughly this size.
+`quantum_radio_plot_10q.png`, and `quantum_radio_report_10q.md` into `quantum_radio/` itself, next
+to the two source files — not under the repo's shared `output/`, since `quantum_radio_crt.html`
+(below) loads its JSON from the same directory it lives in. Every output filename is tagged with
+`--qubits` so different register sizes don't clobber each other's results; `--qubits` is capped at
+20, since the plot renders one point per basis state (2**qubits of them) and matplotlib's
+rasterizer hard-fails on that many past roughly this size.
+
+The plot reshapes that same flat per-basis-state array onto a (cols, rows) grid — the same layout
+`quantum_radio_crt.html` uses — and renders it as a topographic map: a hypsometric colormap (deep
+blue-black through green, yellow, red, to white), hillshaded with a simulated light source, with
+labeled contour lines (dropped above 8 qubits, where the grid stops being spatially meaningful and
+contours degenerate into noise). Hardware and simulator panels each normalize their own color scale
+independently to their own 5th-95th percentile hit count, not 0-to-max — sparse registers are
+mostly near-empty cells with a few outlier hot ones, and stretching the scale to fit those outliers
+crowds everything else into the floor color. A small colorbar legend under each panel shows the
+actual hit-count range being displayed.
 
 `--hardware` additionally submits the circuit to `ibm_marrakesh` (chosen deliberately, not the
 least-busy backend — `--backend NAME` overrides it) and returns immediately — it does not wait for
@@ -475,16 +487,24 @@ files. Same IBM Quantum API token setup as the other hardware-capable scripts ab
 directly, or serve the directory and open it in a browser. It reads one
 `quantum_radio_results_<N>q.json` per qubit count in its `QUBIT_COUNTS` list, one page per register
 size, paged through with on-screen Prev/Next controls or the arrow keys. Each page draws two
-amber-labeled green-phosphor panels, HARDWARE and SIMULATION, mapping every possible outcome for
-that register onto a pixel grid at native resolution — no CSS magnification, one real screen pixel
-per basis state, so panel size scales with qubit count (2 qubits is a 2×2 dot, 16 qubits a
-256×256 image). Only the page currently on screen animates; redrawing every basis state of every
-qubit count simultaneously, 20 times a second, was enough to make the whole page crawl. `QUBIT_COUNTS`
-tops out at 16 for the same reason — 18 qubits means up to 262,144 cells redrawn per panel per
-frame, which drags even as the only page animating. Every frame is sampled fresh and independently
-from the actual shot distribution — no interpolation or memory of the previous frame, with a hard
-black cut between each one — so the underlying probability landscape only becomes visible as a
-pattern in the viewer's eye across many frames, never in any single one.
+panels, HARDWARE and SIMULATION, mapping every possible outcome for that register onto a pixel
+grid — cell count matches the register exactly (2 qubits is a 2×2 grid, 16 qubits is 256×256),
+displayed scaled up via CSS (`image-rendering: pixelated`) so every state reads as a visible
+chunky block instead of a single native screen pixel. Only the page currently on screen animates;
+redrawing every basis state of every qubit count simultaneously, 20 times a second, was enough to
+make the whole page crawl. `QUBIT_COUNTS` tops out at 16 for the same reason — 18 qubits means up
+to 262,144 cells redrawn per panel per frame, which drags even as the only page animating.
+
+A MODE button (or the `M` key) flips both panels between two visualizations of the same underlying
+signal: the original amber-labeled green-phosphor CRT look, and a live topographic render — the
+same hypsometric colormap, light source, and independent 5th-95th-percentile color normalization
+as the static PNG above, computed in vanilla JS and blitted via `ImageData` rather than one
+`fillRect` per cell. Both modes read one fresh independent random draw per basis state every frame,
+weighted by that state's measured probability — the "independent collapse event" — eased toward its
+target rather than jumping straight to it so consecutive frames blend instead of hard-cutting; only
+how that signal is *painted* differs between modes. No contour lines in the live version — that
+needs marching squares over every frame, real implementation work matplotlib's `contour()` gives
+for free — so above 8 qubits (matching the static PNG's cutoff) it's colormap and hillshade only.
 
 ## `quantum_gravity/`
 
