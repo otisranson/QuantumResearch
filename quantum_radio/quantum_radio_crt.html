@@ -15,16 +15,39 @@
     background: #000000;
     color: #ffb000;
     font-family: "Courier New", Courier, monospace;
-    height: 100%;
   }
 
   body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 1.5rem;
-    min-height: 100vh;
+    gap: 3rem;
+    padding: 2rem 1rem 4rem;
+  }
+
+  .row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .row-context {
+    color: #ffb000;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    text-align: center;
+    opacity: 0.85;
+    max-width: 40rem;
+  }
+
+  .row-context .n-qubits {
+    font-size: 1.2rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 0.25rem;
+    opacity: 1;
   }
 
   .panels {
@@ -42,7 +65,6 @@
 
   .panel-label {
     color: #ffb000;
-    font-family: "Courier New", Courier, monospace;
     font-size: 1.1rem;
     letter-spacing: 0.3em;
     text-transform: uppercase;
@@ -52,12 +74,31 @@
     display: block;
     background: #000000;
     image-rendering: pixelated;
-    border-radius: 0;
+  }
+
+  .canvas-wrap {
+    position: relative;
+    display: flex;
+  }
+
+  .no-data {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #ffb000;
+    font-size: 0.9rem;
+    letter-spacing: 0.1em;
+    pointer-events: none;
+  }
+
+  .no-data.visible {
+    display: flex;
   }
 
   .readout {
     color: #ffb000;
-    font-family: "Courier New", Courier, monospace;
     font-size: 1rem;
     letter-spacing: 0.15em;
     text-align: center;
@@ -65,56 +106,105 @@
 
   .status {
     color: #ffb000;
-    font-family: "Courier New", Courier, monospace;
     font-size: 0.9rem;
     letter-spacing: 0.1em;
     opacity: 0.7;
+  }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    color: #ffb000;
+    font-family: "Courier New", Courier, monospace;
+  }
+
+  .pager button {
+    background: transparent;
+    border: 1px solid #ffb000;
+    color: #ffb000;
+    font-family: inherit;
+    font-size: 0.9rem;
+    letter-spacing: 0.15em;
+    padding: 0.4rem 0.9rem;
+    cursor: pointer;
+  }
+
+  .pager button:hover:not(:disabled) {
+    background: #ffb000;
+    color: #000000;
+  }
+
+  .pager button:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .pager button:focus-visible {
+    outline: 2px solid #ffb000;
+    outline-offset: 2px;
+  }
+
+  .pager-indicator {
+    font-size: 0.9rem;
+    letter-spacing: 0.15em;
+    opacity: 0.85;
+    min-width: 12rem;
+    text-align: center;
   }
 </style>
 </head>
 <body>
 
-  <div class="panels">
-    <div class="panel">
-      <div class="panel-label">Hardware</div>
-      <canvas id="hardwareCanvas"></canvas>
-    </div>
-    <div class="panel">
-      <div class="panel-label">Simulation</div>
-      <canvas id="simCanvas"></canvas>
-    </div>
-  </div>
-
-  <div class="readout" id="tvdReadout">TVD: --</div>
-  <div class="status" id="shotCounter">SHOT 0000 / 8192</div>
-
 <script>
 (function () {
   "use strict";
 
-  const N_QUBITS = 7;
-  const N_STATES = 1 << N_QUBITS; // 128
-  const GRID_COLS = 11;
-  const GRID_ROWS = 12; // 11*12 = 132 cells, 4 unused -- rounding is fine
-  const CELL_SIZE = 10; // CSS pixels per cell edge (minimum 8x8 required)
+  // One row per qubit count -- keep this in sync with whichever
+  // quantum_radio_results_<N>q.json files actually exist on disk
+  // (quantum_radio.py --qubits N writes one set per N). Capped at 16: even
+  // with only the active row's canvas drawing (see the pager below), 18
+  // qubits means fillRect-ing up to 262,144 cells per panel at 20fps, which
+  // visibly drags. 16 qubits (65,536 cells) is the largest that stays smooth.
+  const QUBIT_COUNTS = [2, 10, 12, 14, 16];
+
+  // Canvas resolution is set to EXACTLY (cols, rows), displayed at that native
+  // size with no CSS scaling -- one real screen pixel per basis state, so the
+  // "resolution" genuinely is the grid size.
   const PHOSPHOR = [0, 255, 65]; // #00ff41
-  const CONTENT_FPS = 12;
-  const TICK_MS = 1000 / (CONTENT_FPS * 2); // alternate black / content -> 12 content frames/sec
+  const FPS = 20;
+  const TICK_MS = 1000 / FPS;
+  // Each tick still draws a fresh independent random target per cell (weighted
+  // by that state's measured probability) -- the "independent collapse event"
+  // is still real. EASING just keeps what's actually painted from jumping
+  // straight to that target: it eases toward it a fraction of the way each
+  // frame, so consecutive frames blend instead of hard-cutting. Lower = smoother
+  // / laggier, higher = snappier / flickerier; 1.0 would be the original behavior.
+  const EASING = 0.25;
 
-  const hardwareCanvas = document.getElementById("hardwareCanvas");
-  const simCanvas = document.getElementById("simCanvas");
-  const tvdReadout = document.getElementById("tvdReadout");
-  const shotCounter = document.getElementById("shotCounter");
-
-  for (const canvas of [hardwareCanvas, simCanvas]) {
-    canvas.width = GRID_COLS * CELL_SIZE;
-    canvas.height = GRID_ROWS * CELL_SIZE;
+  // Factor n (a power of 2) into a (cols, rows) grid as close to square as
+  // possible, cols >= rows, so every basis state gets exactly one cell. Not
+  // always a perfect square -- odd qubit counts (2**n has only power-of-2
+  // factors) land on the nearest power-of-2 rectangle instead, e.g. 2**15 ->
+  // 256x128, never a wasted cell either way.
+  function gridDimsFor(nStates) {
+    let cols = Math.round(Math.sqrt(nStates));
+    while (nStates % cols !== 0) cols++;
+    return { cols, rows: nStates / cols };
   }
-  const hardwareCtx = hardwareCanvas.getContext("2d");
-  const simCtx = simCanvas.getContext("2d");
 
-  function countsToProbabilities(counts) {
-    const probabilities = new Float64Array(N_STATES);
+  function arrayMax(arr) {
+    // Math.max(...arr) blows the call stack once arr has tens of thousands of
+    // elements (it spreads every element as a function argument) -- at 18
+    // qubits nStates is 262144, well past that limit. A plain loop has no such
+    // bound.
+    let max = 0;
+    for (let i = 0; i < arr.length; i++) if (arr[i] > max) max = arr[i];
+    return max;
+  }
+
+  function countsToProbabilities(counts, nStates) {
+    const probabilities = new Float64Array(nStates);
     if (!counts) return probabilities;
     let total = 0;
     for (const key in counts) total += counts[key];
@@ -131,94 +221,232 @@
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   }
 
-  // Each call is one independent draw from the actual shot distribution -- no
-  // reference to any prior frame, no smoothing, no memory. Every basis state
-  // gets its own fresh random brightness sample, weighted by its own measured
-  // probability relative to the panel's brightest state.
-  function drawFrame(ctx, probabilities, maxProbability) {
+  // Each call draws one fresh independent random target per basis state,
+  // weighted by its own measured probability relative to the panel's
+  // brightest state -- the "independent collapse event". What's actually
+  // painted is eased toward that target (see EASING above) rather than
+  // jumping straight to it, so the flicker reads as smooth motion instead of
+  // a hard per-frame cut. `current` is the persistent eased-brightness buffer,
+  // owned by the caller and mutated in place across calls. Canvas is native
+  // resolution (cols x rows), so each cell is exactly one real pixel.
+  function drawFrame(ctx, probabilities, maxProbability, current, cols, rows) {
     drawBlank(ctx);
-    for (let index = 0; index < N_STATES; index++) {
+    const nStates = cols * rows;
+    for (let index = 0; index < nStates; index++) {
       const weight = maxProbability > 0 ? probabilities[index] / maxProbability : 0;
-      if (weight <= 0) continue;
+      const target = weight > 0 ? Math.random() * weight : 0;
+      current[index] += (target - current[index]) * EASING;
+      if (current[index] <= 0.002) continue; // skip the pixel below the eye's threshold
 
-      const brightness = Math.random() * weight; // 0..1, the "independent collapse event"
-      const col = index % GRID_COLS;
-      const row = Math.floor(index / GRID_COLS);
+      const col = index % cols;
+      const row = Math.floor(index / cols);
 
-      const r = Math.round(PHOSPHOR[0] * brightness);
-      const g = Math.round(PHOSPHOR[1] * brightness);
-      const b = Math.round(PHOSPHOR[2] * brightness);
+      const r = Math.round(PHOSPHOR[0] * current[index]);
+      const g = Math.round(PHOSPHOR[1] * current[index]);
+      const b = Math.round(PHOSPHOR[2] * current[index]);
       ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-      ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      ctx.fillRect(col, row, 1, 1);
     }
-    drawScanlines(ctx);
+    drawScanlines(ctx, rows);
   }
 
-  function drawScanlines(ctx) {
+  function drawScanlines(ctx, rows) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-    for (let row = 0; row < GRID_ROWS; row += 2) {
-      ctx.fillRect(0, row * CELL_SIZE, ctx.canvas.width, CELL_SIZE);
+    for (let row = 0; row < rows; row += 2) {
+      ctx.fillRect(0, row, ctx.canvas.width, 1);
     }
   }
 
-  function drawNoDataLabel(ctx) {
-    ctx.fillStyle = "#ffb000";
-    ctx.font = "10px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("NO DATA", ctx.canvas.width / 2, ctx.canvas.height / 2);
+  // DOM construction only -- no data yet, so this runs synchronously for every
+  // qubit count up front. That keeps row order matching QUBIT_COUNTS order
+  // regardless of which row's fetch resolves first (see populateRow).
+  function buildRowDom(nQubits) {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const context = document.createElement("div");
+    context.className = "row-context";
+    context.innerHTML = `<span class="n-qubits">${nQubits} qubits</span>loading...`;
+    row.appendChild(context);
+
+    const panels = document.createElement("div");
+    panels.className = "panels";
+
+    const hardwarePanel = document.createElement("div");
+    hardwarePanel.className = "panel";
+    hardwarePanel.innerHTML =
+      `<div class="panel-label">Hardware</div>` +
+      `<div class="canvas-wrap"><canvas></canvas><div class="no-data">NO DATA</div></div>`;
+    const hardwareCanvas = hardwarePanel.querySelector("canvas");
+    const hardwareNoData = hardwarePanel.querySelector(".no-data");
+
+    const simPanel = document.createElement("div");
+    simPanel.className = "panel";
+    simPanel.innerHTML = `<div class="panel-label">Simulation</div><div class="canvas-wrap"><canvas></canvas></div>`;
+    const simCanvas = simPanel.querySelector("canvas");
+
+    panels.appendChild(hardwarePanel);
+    panels.appendChild(simPanel);
+    row.appendChild(panels);
+
+    const readout = document.createElement("div");
+    readout.className = "readout";
+    readout.textContent = "TVD: --";
+    row.appendChild(readout);
+
+    const status = document.createElement("div");
+    status.className = "status";
+    status.textContent = "SHOT 0000 / 0000";
+    row.appendChild(status);
+
+    const nStates = 1 << nQubits;
+    const { cols, rows } = gridDimsFor(nStates);
+    // Native resolution == grid size exactly, with NO CSS magnification -- one
+    // real screen pixel per basis state. (Stretching a small canvas back up via
+    // CSS would just recreate the same chunky blocks through nearest-neighbor
+    // scaling, even with image-rendering: pixelated -- displaying it at its true
+    // size is what actually removes that chunkiness.) This also naturally makes
+    // panels differ in physical size by qubit count -- 2 qubits is a 2x2 dot,
+    // 16 qubits a 256x256 image -- rather than force-fitting every row to the
+    // same displayed size.
+    for (const canvas of [hardwareCanvas, simCanvas]) {
+      canvas.width = cols;
+      canvas.height = rows;
+    }
+
+    return { row, hardwareCanvas, simCanvas, hardwareNoData, context, readout, status, nStates, cols, rows };
   }
 
-  async function main() {
+  // Fetches this row's data and wires up drawing state. Only ever touches its
+  // own row's DOM/canvases -- never starts a render loop itself. Returns a
+  // tick function (or null on failure) that the pager calls only while this
+  // row is the one on screen.
+  async function populateRow(nQubits, dom) {
+    const { hardwareCanvas, simCanvas, hardwareNoData, context, readout, status, nStates, cols, rows } = dom;
+    const hardwareCtx = hardwareCanvas.getContext("2d");
+    const simCtx = simCanvas.getContext("2d");
+
     let data;
     try {
-      const response = await fetch("quantum_radio_results.json");
+      const response = await fetch(`quantum_radio_results_${nQubits}q.json`);
       data = await response.json();
     } catch (err) {
-      tvdReadout.textContent = "TVD: -- (could not load quantum_radio_results.json)";
+      context.innerHTML = `<span class="n-qubits">${nQubits} qubits</span>could not load quantum_radio_results_${nQubits}q.json -- run quantum_radio.py --qubits ${nQubits} first`;
       drawBlank(hardwareCtx);
       drawBlank(simCtx);
-      drawNoDataLabel(hardwareCtx);
-      drawNoDataLabel(simCtx);
-      return;
+      hardwareNoData.classList.add("visible");
+      return null;
     }
 
     const shots = data.shots || 8192;
     const hasHardware = !!data.hardware_counts;
+    hardwareNoData.classList.toggle("visible", !hasHardware);
+    const shotsPerState = (shots / nStates).toFixed(shots / nStates < 10 ? 1 : 0);
 
-    const simProbabilities = countsToProbabilities(data.simulator_counts);
-    const hardwareProbabilities = countsToProbabilities(data.hardware_counts);
-    const simMax = Math.max(...simProbabilities);
-    const hardwareMax = Math.max(...hardwareProbabilities);
+    context.innerHTML =
+      `<span class="n-qubits">${nQubits} qubits</span>` +
+      `${nStates.toLocaleString()} states &middot; ${cols}&times;${rows} grid &middot; ` +
+      `${shots.toLocaleString()} shots (~${shotsPerState}/state)`;
 
-    tvdReadout.textContent =
+    const simProbabilities = countsToProbabilities(data.simulator_counts, nStates);
+    const hardwareProbabilities = countsToProbabilities(data.hardware_counts, nStates);
+    const simMax = arrayMax(simProbabilities);
+    const hardwareMax = arrayMax(hardwareProbabilities);
+
+    readout.textContent =
       typeof data.total_variation_distance === "number"
         ? `TVD: ${data.total_variation_distance.toFixed(4)}`
         : "TVD: -- (no hardware run)";
 
     let shot = 0;
-    let showingBlank = true;
+    const hardwareBrightness = new Float32Array(nStates);
+    const simBrightness = new Float32Array(nStates);
 
-    function tick() {
-      if (showingBlank) {
-        drawBlank(hardwareCtx);
-        drawBlank(simCtx);
-      } else {
-        if (hasHardware) {
-          drawFrame(hardwareCtx, hardwareProbabilities, hardwareMax);
-        } else {
-          drawBlank(hardwareCtx);
-          drawNoDataLabel(hardwareCtx);
-        }
-        drawFrame(simCtx, simProbabilities, simMax);
+    if (!hasHardware) drawBlank(hardwareCtx); // static -- the "NO DATA" HTML overlay does the rest
 
-        shot = (shot + 1) % (shots + 1);
-        shotCounter.textContent = `SHOT ${String(shot).padStart(4, "0")} / ${shots}`;
+    return function tick() {
+      if (hasHardware) {
+        drawFrame(hardwareCtx, hardwareProbabilities, hardwareMax, hardwareBrightness, cols, rows);
       }
-      showingBlank = !showingBlank;
-    }
+      drawFrame(simCtx, simProbabilities, simMax, simBrightness, cols, rows);
 
-    tick();
-    setInterval(tick, TICK_MS);
+      shot = (shot + 1) % (shots + 1);
+      status.textContent = `SHOT ${String(shot).padStart(4, "0")} / ${shots}`;
+    };
+  }
+
+  // Rendering all rows at once meant redrawing every basis state of every
+  // qubit count 20x/second simultaneously -- at 18 qubits alone that's
+  // 262,144 cells per panel, per frame. The pager only ever runs the tick
+  // function for the row currently on screen, so frame cost stays flat
+  // regardless of how many qubit counts are in QUBIT_COUNTS.
+  function buildPager(nQubits, onNav) {
+    const pager = document.createElement("div");
+    pager.className = "pager";
+
+    const prev = document.createElement("button");
+    prev.textContent = "‹ PREV";
+    prev.addEventListener("click", () => onNav(-1));
+
+    const indicator = document.createElement("div");
+    indicator.className = "pager-indicator";
+
+    const next = document.createElement("button");
+    next.textContent = "NEXT ›";
+    next.addEventListener("click", () => onNav(1));
+
+    pager.appendChild(prev);
+    pager.appendChild(indicator);
+    pager.appendChild(next);
+    document.body.appendChild(pager);
+
+    return {
+      el: pager,
+      setState(index, total) {
+        indicator.textContent = `${index + 1} / ${total} · ${nQubits[index]} QUBITS`;
+        prev.disabled = index === 0;
+        next.disabled = index === total - 1;
+      },
+    };
+  }
+
+  async function main() {
+    const doms = QUBIT_COUNTS.map(buildRowDom);
+    for (const dom of doms) document.body.appendChild(dom.row);
+
+    let current = 0;
+    const showOnly = (index) => {
+      doms.forEach((dom, i) => { dom.row.style.display = i === index ? "" : "none"; });
+    };
+    showOnly(current);
+
+    const pager = buildPager(QUBIT_COUNTS, (delta) => {
+      const next = current + delta;
+      if (next < 0 || next >= QUBIT_COUNTS.length) return;
+      current = next;
+      showOnly(current);
+      pager.setState(current, QUBIT_COUNTS.length);
+    });
+    pager.setState(current, QUBIT_COUNTS.length);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") pager.el.querySelector("button").click();
+      if (e.key === "ArrowRight") pager.el.querySelectorAll("button")[1].click();
+    });
+
+    // allSettled rather than all: one row throwing (bad/missing data, a
+    // rendering bug at some future qubit count) must not stop the rest from
+    // loading.
+    const results = await Promise.allSettled(QUBIT_COUNTS.map((n, i) => populateRow(n, doms[i])));
+    const ticks = results.map((result) => (result.status === "fulfilled" ? result.value : null));
+    results.forEach((result, i) => {
+      if (result.status === "rejected") console.error(`quantum_radio row ${QUBIT_COUNTS[i]}q setup failed:`, result.reason);
+    });
+
+    setInterval(() => {
+      const tick = ticks[current];
+      if (tick) tick();
+    }, TICK_MS);
   }
 
   main();

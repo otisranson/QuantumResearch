@@ -1,0 +1,17 @@
+{
+  "n_qubits": 2,
+  "shots": 32,
+  "phi": 1.618033988749895,
+  "timestamp": "2026-08-14T10:52:41",
+  "simulator_counts": {
+    "01": 9,
+    "00": 5,
+    "10": 7,
+    "11": 11
+  },
+  "hardware_counts": null,
+  "hardware_backend": null,
+  "hardware_job_id": null,
+  "total_variation_distance": null,
+  "novel_hardware_states": []
+}

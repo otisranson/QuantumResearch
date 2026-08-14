@@ -420,8 +420,8 @@ averaged away.
 
 ## `quantum_radio/`
 
-A sparse listening experiment rather than a computation: 7 qubits get a Hadamard each (full
-superposition), a single `CX` chain `0→1→2→3→4→5→6` (one thread of entanglement across the whole
+A sparse listening experiment rather than a computation: 10 qubits get a Hadamard each (full
+superposition), a single `CX` chain `0→1→2→...→9` (one thread of entanglement across the whole
 register), then an `RZ(pi * phi)` phase kick on every qubit, where `phi` is the golden ratio —
 chosen for its place at the boundary between order and emergent structure in natural systems,
 philosophically consistent with a circuit built to listen at the boundary between classical and
@@ -431,26 +431,35 @@ pretending), once on a real IBM Quantum backend as the instrument (genuine stoch
 decoherence included). Wherever the two 8192-shot output distributions diverge — measured as
 [total variation distance](https://en.wikipedia.org/wiki/Total_variation_distance_of_probability_measures),
 plus any basis states the hardware produced that the ideal circuit gives zero probability — is
-where the hardware is contributing something the simulator can't account for.
+where the hardware is contributing something the simulator can't account for. 8192 shots across
+1024 states averages ~8 shots/state — sparser sampling than a smaller register would give, so some
+of what shows up as divergence here is sampling noise as much as it's hardware signal; it isn't
+separated out.
 
 ```bash
-./.venv/bin/python quantum_radio/quantum_radio.py
+./.venv/bin/python quantum_radio/quantum_radio.py --qubits 10
 ```
 
-Runs the `AerSimulator` control on its own and writes `quantum_radio_results.json`,
-`quantum_radio_plot.png` (both distributions as side-by-side histograms), and
-`quantum_radio_report.md` into `quantum_radio/` itself, next to the two source files — not under
-the repo's shared `output/`, since `quantum_radio_crt.html` (below) loads its JSON from the same
-directory it lives in.
+Runs the `AerSimulator` control on its own and writes `quantum_radio_results_10q.json`,
+`quantum_radio_plot_10q.png` (both distributions as side-by-side fill plots), and
+`quantum_radio_report_10q.md` into `quantum_radio/` itself, next to the two source files — not
+under the repo's shared `output/`, since `quantum_radio_crt.html` (below) loads its JSON from the
+same directory it lives in. Every output filename is tagged with `--qubits` so different register
+sizes don't clobber each other's results; `--qubits` is capped at 20, since `plot_comparison`
+renders one point per basis state (2**qubits of them) and matplotlib's rasterizer hard-fails on
+that many past roughly this size.
 
 `--hardware` additionally submits the circuit to `ibm_kingston` (chosen deliberately, not the
 least-busy backend — `--backend NAME` overrides it) and returns immediately — it does not wait for
 the job to run. IBM Quantum queues can run from minutes to many hours (a `--hardware` run once sat
 `QUEUED` overnight before it was cancelled the next morning), so nothing here blocks on the job's
-result; the job ID and backend are saved to `quantum_radio_job.json` for the next step to pick up.
+result; the job ID and backend are saved to `quantum_radio_job_10q.json` for the next step to pick
+up. Hardware shots are separately capped at 10,000 regardless of `--shots` (IBM's own per-job cap
+is 100,000) — the local simulator has no such cap and can run into the millions for a dense sweep
+at high qubit counts.
 
 ```bash
-./.venv/bin/python quantum_radio/quantum_radio.py --hardware
+./.venv/bin/python quantum_radio/quantum_radio.py --qubits 10 --hardware
 ```
 
 `--check-job` polls that saved job non-blockingly: if it's still queued or running, it prints the
@@ -459,13 +468,20 @@ status and exits immediately; once it's done, it fetches the results, fills in t
 files. Same IBM Quantum API token setup as the other hardware-capable scripts above.
 
 ```bash
-./.venv/bin/python quantum_radio/quantum_radio.py --check-job
+./.venv/bin/python quantum_radio/quantum_radio.py --qubits 10 --check-job
 ```
 
 `quantum_radio_crt.html` is a standalone canvas renderer, no build step or dependencies — open it
-directly, or serve the directory and open it in a browser. It reads `quantum_radio_results.json`
-and draws two amber-labeled green-phosphor panels, HARDWARE and SIMULATION, mapping all 128
-possible 7-bit outcomes onto an 11×12 pixel grid. Every frame is sampled fresh and independently
+directly, or serve the directory and open it in a browser. It reads one
+`quantum_radio_results_<N>q.json` per qubit count in its `QUBIT_COUNTS` list, one page per register
+size, paged through with on-screen Prev/Next controls or the arrow keys. Each page draws two
+amber-labeled green-phosphor panels, HARDWARE and SIMULATION, mapping every possible outcome for
+that register onto a pixel grid at native resolution — no CSS magnification, one real screen pixel
+per basis state, so panel size scales with qubit count (2 qubits is a 2×2 dot, 16 qubits a
+256×256 image). Only the page currently on screen animates; redrawing every basis state of every
+qubit count simultaneously, 20 times a second, was enough to make the whole page crawl. `QUBIT_COUNTS`
+tops out at 16 for the same reason — 18 qubits means up to 262,144 cells redrawn per panel per
+frame, which drags even as the only page animating. Every frame is sampled fresh and independently
 from the actual shot distribution — no interpolation or memory of the previous frame, with a hard
 black cut between each one — so the underlying probability landscape only becomes visible as a
 pattern in the viewer's eye across many frames, never in any single one.

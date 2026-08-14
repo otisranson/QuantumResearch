@@ -48,18 +48,42 @@ import numpy as np
 from qiskit import QuantumCircuit, transpile
 
 OUTPUT_DIR = Path(__file__).parent  # quantum_radio_crt.html fetches its JSON from this same directory
-JOB_STATE_PATH = OUTPUT_DIR / "quantum_radio_job.json"  # tracks a submitted-but-not-yet-fetched hardware job
 
-N_QUBITS = 7
+N_QUBITS = 10
 SHOTS = 8192
 PHI = (1 + np.sqrt(5)) / 2
+
+# IBM Quantum backends cap a single job at 100,000 shots; we cap well under
+# that ourselves so --hardware runs stay cheap and fast to queue regardless of
+# how high --shots is pushed for local sweeps (the simulator has no such cap --
+# see quantum_radio_results_18q.json's 2M+ shots).
+HARDWARE_SHOTS_CAP = 10_000
+
+# plot_comparison renders one point per basis state (2**N_QUBITS of them) so the
+# viewer can see the full per-state distribution, same resolution the CRT renderer
+# uses. Past this, Agg's rasterizer hits its own hard "cell block limit" and raises
+# (empirically ~2**21-2**22 vertices); well before that it's already multi-GB and
+# tens of seconds per plot. Not a Qiskit/hardware limit -- a matplotlib one.
+MAX_PLOTTABLE_QUBITS = 20
+
+
+def _tag() -> str:
+    """Filename suffix identifying the current qubit count, so runs at different
+    --qubits don't clobber each other's output (quantum_radio_crt.html's multi-row
+    view reads several of these side by side)."""
+    return f"{N_QUBITS}q"
+
+
+def job_state_path() -> Path:
+    """Tracks a submitted-but-not-yet-fetched hardware job, one file per qubit count."""
+    return OUTPUT_DIR / f"quantum_radio_job_{_tag()}.json"
 
 
 def build_circuit() -> QuantumCircuit:
     """The listening circuit: full superposition, a single chain of entanglement,
     and a golden-ratio phase kick -- then straight to measurement. No error
-    correction, no repetition, no structure beyond what's needed to put all seven
-    qubits into one entangled state and let the hardware do what it does."""
+    correction, no repetition, no structure beyond what's needed to put all
+    N_QUBITS qubits into one entangled state and let the hardware do what it does."""
     qc = QuantumCircuit(N_QUBITS, N_QUBITS)
 
     for q in range(N_QUBITS):
@@ -101,6 +125,10 @@ def submit_hardware(circuit: QuantumCircuit, shots: int, backend_name: str) -> H
     is fetched later, non-blockingly, via --check-job."""
     from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 
+    if shots > HARDWARE_SHOTS_CAP:
+        print(f"Requested {shots} shots exceeds the hardware cap ({HARDWARE_SHOTS_CAP}) -- using {HARDWARE_SHOTS_CAP} instead.")
+        shots = HARDWARE_SHOTS_CAP
+
     service = QiskitRuntimeService()
     backend = service.backend(backend_name)
     pending_jobs = backend.status().pending_jobs
@@ -115,7 +143,7 @@ def submit_hardware(circuit: QuantumCircuit, shots: int, backend_name: str) -> H
 
 
 def save_job_state(meta: HardwareRunMetadata) -> None:
-    JOB_STATE_PATH.write_text(
+    job_state_path().write_text(
         json.dumps(
             {
                 "backend_name": meta.backend_name,
@@ -129,9 +157,10 @@ def save_job_state(meta: HardwareRunMetadata) -> None:
 
 
 def load_job_state() -> dict | None:
-    if not JOB_STATE_PATH.exists():
+    path = job_state_path()
+    if not path.exists():
         return None
-    return json.loads(JOB_STATE_PATH.read_text())
+    return json.loads(path.read_text())
 
 
 def check_job(circuit: QuantumCircuit, shots: int) -> None:
@@ -142,7 +171,7 @@ def check_job(circuit: QuantumCircuit, shots: int) -> None:
 
     state = load_job_state()
     if state is None:
-        print(f"No pending hardware job found ({JOB_STATE_PATH.name} missing). Submit one with --hardware.")
+        print(f"No pending hardware job found ({job_state_path().name} missing). Submit one with --hardware --qubits {N_QUBITS}.")
         return
 
     service = QiskitRuntimeService()
@@ -178,7 +207,7 @@ def check_job(circuit: QuantumCircuit, shots: int) -> None:
     print(f"JSON:   {json_path}")
     print(f"Report: {report_path}")
 
-    JOB_STATE_PATH.unlink()
+    job_state_path().unlink()
 
 
 def counts_to_probabilities(counts: dict[str, int], n_qubits: int) -> np.ndarray:
@@ -213,8 +242,16 @@ def novel_hardware_states(sim_counts: dict[str, int], hardware_counts: dict[str,
 
 def plot_comparison(sim_counts: dict[str, int], hardware_counts: dict[str, int] | None, backend_name: str | None) -> Path:
     """Both output distributions as histograms, side by side, sharing a y-axis
-    scale so the shape of the divergence is directly visible."""
+    scale so the shape of the divergence is directly visible.
+
+    Uses fill_between (one polygon per panel) rather than bar (one Rectangle
+    patch per basis state). dim = 2**N_QUBITS, so bar's per-state object
+    overhead was growing exponentially with qubit count -- at 20+ qubits that's
+    millions of patch objects, enough to exhaust memory and lock up the
+    machine. fill_between renders the same shape from a single vectorized
+    path, independent of qubit count."""
     dim = 2**N_QUBITS
+    x = np.arange(dim)
     sim_probabilities = counts_to_probabilities(sim_counts, N_QUBITS)
 
     fig, (ax_hw, ax_sim) = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
@@ -222,24 +259,26 @@ def plot_comparison(sim_counts: dict[str, int], hardware_counts: dict[str, int] 
     if hardware_counts is not None:
         hardware_probabilities = counts_to_probabilities(hardware_counts, N_QUBITS)
         shared_ylim = max(sim_probabilities.max(), hardware_probabilities.max()) * 1.1
-        ax_hw.bar(range(dim), hardware_probabilities, color="tab:red")
+        ax_hw.fill_between(x, hardware_probabilities, step="mid", color="tab:red", linewidth=0, rasterized=True)
         ax_hw.set_title(f"Hardware ({backend_name})")
     else:
         shared_ylim = sim_probabilities.max() * 1.1
         ax_hw.set_title("Hardware (not run -- pass --hardware)")
 
-    ax_hw.set_xlabel("basis state (0-127)")
+    ax_hw.set_xlabel(f"basis state (0-{dim - 1})")
     ax_hw.set_ylabel("probability")
+    ax_hw.set_xlim(0, dim - 1)
     ax_hw.set_ylim(0, shared_ylim)
 
-    ax_sim.bar(range(dim), sim_probabilities, color="tab:blue")
+    ax_sim.fill_between(x, sim_probabilities, step="mid", color="tab:blue", linewidth=0, rasterized=True)
     ax_sim.set_title("Simulator (AerSimulator)")
-    ax_sim.set_xlabel("basis state (0-127)")
+    ax_sim.set_xlabel(f"basis state (0-{dim - 1})")
+    ax_sim.set_xlim(0, dim - 1)
     ax_sim.set_ylim(0, shared_ylim)
 
-    fig.suptitle("Quantum Radio: hardware vs. simulator output distribution")
+    fig.suptitle(f"Quantum Radio ({N_QUBITS} qubits): hardware vs. simulator output distribution")
     fig.tight_layout()
-    path = OUTPUT_DIR / "quantum_radio_plot.png"
+    path = OUTPUT_DIR / f"quantum_radio_plot_{_tag()}.png"
     fig.savefig(path, dpi=150)
     plt.close(fig)
     return path
@@ -264,7 +303,7 @@ def save_results_json(
         "total_variation_distance": tvd,
         "novel_hardware_states": novel_states,
     }
-    path = OUTPUT_DIR / "quantum_radio_results.json"
+    path = OUTPUT_DIR / f"quantum_radio_results_{_tag()}.json"
     path.write_text(json.dumps(payload, indent=2))
     return path
 
@@ -305,9 +344,9 @@ def write_report(
             "",
             "## Simulator distribution only",
             "",
-            f"{len(sim_counts)} of 128 basis states appeared across {SHOTS} shots.",
+            f"{len(sim_counts)} of {2**N_QUBITS} basis states appeared across {SHOTS} shots.",
         ]
-        path = OUTPUT_DIR / "quantum_radio_report.md"
+        path = OUTPUT_DIR / f"quantum_radio_report_{_tag()}.md"
         path.write_text("\n".join(lines) + "\n")
         return path
 
@@ -352,12 +391,14 @@ def write_report(
         lines.append(f"| `{bitstring}` | {index} | {sim_probabilities[index]:.4%} | {hardware_probabilities[index]:.4%} | {divergence[index]:.4%} |")
     lines.append("")
 
-    path = OUTPUT_DIR / "quantum_radio_report.md"
+    path = OUTPUT_DIR / f"quantum_radio_report_{_tag()}.md"
     path.write_text("\n".join(lines) + "\n")
     return path
 
 
 def main() -> None:
+    global N_QUBITS, SHOTS
+
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--hardware",
@@ -370,8 +411,9 @@ def main() -> None:
     parser.add_argument(
         "--check-job",
         action="store_true",
-        help="Check the hardware job previously submitted with --hardware. If it has finished, fetch "
-        "the results and write the full comparison; otherwise report its status and exit. Never blocks.",
+        help="Check the hardware job previously submitted with --hardware at the same --qubits. If it "
+        "has finished, fetch the results and write the full comparison; otherwise report its status "
+        "and exit. Never blocks.",
     )
     parser.add_argument(
         "--backend",
@@ -379,9 +421,36 @@ def main() -> None:
         help="IBM Quantum backend name to use with --hardware (default: ibm_kingston, chosen "
         "deliberately -- not the least-busy backend).",
     )
+    parser.add_argument(
+        "--qubits",
+        type=int,
+        default=N_QUBITS,
+        help=f"Register size (default: {N_QUBITS}). Output filenames are tagged with this "
+        "(quantum_radio_results_<N>q.json etc.) so runs at different sizes don't overwrite each "
+        "other -- quantum_radio_crt.html's multi-row view reads several side by side.",
+    )
+    parser.add_argument(
+        "--shots",
+        type=int,
+        default=SHOTS,
+        help=f"Shots per run (default: {SHOTS}). Applies to the local simulator uncapped -- at higher "
+        "--qubits, shots/state falls fast (2**qubits states share the same shot budget), so raise this "
+        f"to compensate or expect a sparser distribution. --hardware runs are separately capped at "
+        f"{HARDWARE_SHOTS_CAP} regardless of this value (IBM Quantum's own per-job cap is 100,000).",
+    )
     args = parser.parse_args()
     if args.hardware and args.check_job:
         parser.error("--hardware and --check-job are mutually exclusive")
+    if args.qubits > MAX_PLOTTABLE_QUBITS:
+        parser.error(
+            f"--qubits {args.qubits} exceeds MAX_PLOTTABLE_QUBITS ({MAX_PLOTTABLE_QUBITS}). "
+            f"plot_comparison plots 2**qubits points per panel; beyond this it's already "
+            f"multi-GB and tens of seconds per plot, heading toward a hard failure in "
+            f"matplotlib's rasterizer. Not a hardware or Qiskit limit -- lower --qubits."
+        )
+
+    N_QUBITS = args.qubits
+    SHOTS = args.shots
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     circuit = build_circuit()
