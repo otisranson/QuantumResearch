@@ -175,6 +175,10 @@
   // integer scale.
   const CELL_SCALE_TARGET_PX = 512;
   const PHOSPHOR = [0, 255, 65]; // #00ff41
+  // Global rather than per-row: one switch changes how every row paints,
+  // read fresh each tick (see populateRow) so flipping it takes effect on the
+  // very next frame, no rebuild needed.
+  let renderMode = "phosphor"; // "phosphor" | "topo"
   const FPS = 20;
   const TICK_MS = 1000 / FPS;
   // Each tick still draws a fresh independent random target per cell (weighted
@@ -224,21 +228,29 @@
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   }
 
-  // Each call draws one fresh independent random target per basis state,
-  // weighted by its own measured probability relative to the panel's
-  // brightest state -- the "independent collapse event". What's actually
-  // painted is eased toward that target (see EASING above) rather than
-  // jumping straight to it, so the flicker reads as smooth motion instead of
-  // a hard per-frame cut. `current` is the persistent eased-brightness buffer,
-  // owned by the caller and mutated in place across calls. Canvas is native
-  // resolution (cols x rows), so each cell is exactly one real pixel.
-  function drawFrame(ctx, probabilities, maxProbability, current, cols, rows) {
-    drawBlank(ctx);
-    const nStates = cols * rows;
+  // Draws one fresh independent random target per basis state, weighted by
+  // its own measured probability relative to the panel's brightest state --
+  // the "independent collapse event". What's actually stored is eased toward
+  // that target (see EASING above) rather than jumping straight to it, so the
+  // flicker reads as smooth motion instead of a hard per-frame cut. `current`
+  // is the persistent eased-brightness/elevation buffer, owned by the caller
+  // and mutated in place across calls -- shared between both paint modes
+  // below, since it's the same underlying signal either way, just visualized
+  // differently.
+  function updateBrightness(probabilities, maxProbability, current, nStates) {
     for (let index = 0; index < nStates; index++) {
       const weight = maxProbability > 0 ? probabilities[index] / maxProbability : 0;
       const target = weight > 0 ? Math.random() * weight : 0;
       current[index] += (target - current[index]) * EASING;
+    }
+  }
+
+  // Canvas is native resolution (cols x rows), so each cell is exactly one
+  // real pixel (scaled up for display via CSS -- see buildRowDom).
+  function paintPhosphor(ctx, current, cols, rows) {
+    drawBlank(ctx);
+    const nStates = cols * rows;
+    for (let index = 0; index < nStates; index++) {
       if (current[index] <= 0.002) continue; // skip the pixel below the eye's threshold
 
       const col = index % cols;
@@ -258,6 +270,82 @@
     for (let row = 0; row < rows; row += 2) {
       ctx.fillRect(0, row, ctx.canvas.width, 1);
     }
+  }
+
+  // Same hypsometric stops as quantum_radio.py's TOPO_CMAP -- deep blue-black
+  // through green, yellow, red, to white -- so the live and static renders
+  // agree visually.
+  const TOPO_STOPS = [
+    [0.00, [1, 4, 12]],
+    [0.20, [11, 61, 145]],
+    [0.45, [42, 157, 52]],
+    [0.65, [233, 199, 22]],
+    [0.82, [209, 52, 31]],
+    [1.00, [253, 248, 239]],
+  ];
+
+  function topoColor(t) {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    for (let i = 0; i < TOPO_STOPS.length - 1; i++) {
+      const [t0, c0] = TOPO_STOPS[i];
+      const [t1, c1] = TOPO_STOPS[i + 1];
+      if (t <= t1) {
+        const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+        return [c0[0] + (c1[0] - c0[0]) * f, c0[1] + (c1[1] - c0[1]) * f, c0[2] + (c1[2] - c0[2]) * f];
+      }
+    }
+    return TOPO_STOPS[TOPO_STOPS.length - 1][1];
+  }
+
+  // Same light source as quantum_radio.py's LightSource(azdeg=315, altdeg=45).
+  const LIGHT_AZ = (315 * Math.PI) / 180;
+  const LIGHT_ALT = (45 * Math.PI) / 180;
+  const LIGHT_VEC = [Math.cos(LIGHT_ALT) * Math.cos(LIGHT_AZ), Math.cos(LIGHT_ALT) * Math.sin(LIGHT_AZ), Math.sin(LIGHT_ALT)];
+  const VERT_EXAG = 3; // matches plot_comparison's hillshade vert_exag
+  const HILLSHADE_BLEND = 0.3; // matches plot_comparison's 70/30 color/hillshade blend
+
+  // `current` doubles as an "elevation" grid here -- same eased per-cell
+  // signal paintPhosphor reads as brightness, just colormapped and hillshaded
+  // instead. No contour lines: that needs marching squares over the live
+  // frame, which is real implementation work matplotlib's contour() does for
+  // free, and quantum_radio.py already drops contours above 8 qubits anyway
+  // since they degenerate to noise once cells aren't spatially correlated.
+  // Uses a single ImageData blit instead of one fillRect per cell -- cheaper
+  // than paintPhosphor, not more expensive, despite doing more math per cell.
+  function paintTopo(ctx, current, cols, rows) {
+    const imageData = ctx.createImageData(cols, rows);
+    const data = imageData.data;
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const index = row * cols + col;
+        const left = current[row * cols + Math.max(col - 1, 0)];
+        const right = current[row * cols + Math.min(col + 1, cols - 1)];
+        const up = current[Math.max(row - 1, 0) * cols + col];
+        const down = current[Math.min(row + 1, rows - 1) * cols + col];
+
+        const dzdx = (right - left) * 0.5 * VERT_EXAG;
+        const dzdy = (down - up) * 0.5 * VERT_EXAG;
+
+        let nx = -dzdx;
+        let ny = -dzdy;
+        let nz = 1;
+        const nlen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        nx /= nlen;
+        ny /= nlen;
+        nz /= nlen;
+        const shade = Math.max(0, nx * LIGHT_VEC[0] + ny * LIGHT_VEC[1] + nz * LIGHT_VEC[2]);
+
+        const [cr, cg, cb] = topoColor(current[index]);
+        const shadeRgb = shade * 255;
+        const pixelIndex = index * 4;
+        data[pixelIndex] = cr * (1 - HILLSHADE_BLEND) + shadeRgb * HILLSHADE_BLEND;
+        data[pixelIndex + 1] = cg * (1 - HILLSHADE_BLEND) + shadeRgb * HILLSHADE_BLEND;
+        data[pixelIndex + 2] = cb * (1 - HILLSHADE_BLEND) + shadeRgb * HILLSHADE_BLEND;
+        data[pixelIndex + 3] = 255;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
   }
 
   // DOM construction only -- no data yet, so this runs synchronously for every
@@ -373,10 +461,13 @@
     if (!hasHardware) drawBlank(hardwareCtx); // static -- the "NO DATA" HTML overlay does the rest
 
     return function tick() {
+      const paint = renderMode === "topo" ? paintTopo : paintPhosphor;
       if (hasHardware) {
-        drawFrame(hardwareCtx, hardwareProbabilities, hardwareMax, hardwareBrightness, cols, rows);
+        updateBrightness(hardwareProbabilities, hardwareMax, hardwareBrightness, nStates);
+        paint(hardwareCtx, hardwareBrightness, cols, rows);
       }
-      drawFrame(simCtx, simProbabilities, simMax, simBrightness, cols, rows);
+      updateBrightness(simProbabilities, simMax, simBrightness, nStates);
+      paint(simCtx, simBrightness, cols, rows);
 
       shot = (shot + 1) % (shots + 1);
       status.textContent = `SHOT ${String(shot).padStart(4, "0")} / ${shots}`;
@@ -418,6 +509,21 @@
     };
   }
 
+  // Flips the global renderMode (see top of file) between the green-phosphor
+  // CRT look and the live topographic render (paintTopo). Both read the same
+  // eased per-cell signal (see updateBrightness) -- this only changes how
+  // that signal is painted, not the "independent collapse event" underneath
+  // it, and takes effect on the very next tick with no rebuild.
+  function buildModeToggle() {
+    const button = document.createElement("button");
+    button.textContent = "MODE: PHOSPHOR";
+    button.addEventListener("click", () => {
+      renderMode = renderMode === "phosphor" ? "topo" : "phosphor";
+      button.textContent = renderMode === "topo" ? "MODE: TOPO" : "MODE: PHOSPHOR";
+    });
+    return button;
+  }
+
   async function main() {
     const doms = QUBIT_COUNTS.map(buildRowDom);
     for (const dom of doms) document.body.appendChild(dom.row);
@@ -437,9 +543,13 @@
     });
     pager.setState(current, QUBIT_COUNTS.length);
 
+    const modeToggle = buildModeToggle();
+    pager.el.appendChild(modeToggle);
+
     document.addEventListener("keydown", (e) => {
       if (e.key === "ArrowLeft") pager.el.querySelector("button").click();
       if (e.key === "ArrowRight") pager.el.querySelectorAll("button")[1].click();
+      if (e.key === "m" || e.key === "M") modeToggle.click();
     });
 
     // allSettled rather than all: one row throwing (bad/missing data, a
