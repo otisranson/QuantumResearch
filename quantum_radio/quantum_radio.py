@@ -46,6 +46,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LightSource, LinearSegmentedColormap, Normalize
 from qiskit import QuantumCircuit, transpile
 
@@ -280,7 +281,7 @@ TOPO_CMAP = LinearSegmentedColormap.from_list(
 CONTOUR_MAX_QUBITS = 8
 
 
-def draw_topographic_panel(ax, probabilities: np.ndarray, shots: int, cols: int, rows: int, vmax: float, draw_contours: bool) -> None:
+def draw_topographic_panel(ax, probabilities: np.ndarray, shots: int, cols: int, rows: int, draw_contours: bool) -> None:
     """Render one panel's probability distribution as a topographic map:
     reshape the flat per-basis-state array onto the (cols, rows) grid, color
     it with TOPO_CMAP, hillshade it for relief, and (below CONTOUR_MAX_QUBITS)
@@ -289,21 +290,38 @@ def draw_topographic_panel(ax, probabilities: np.ndarray, shots: int, cols: int,
     per-basis-state bar/fill rendering, cost here is one imshow + one contour
     pass regardless of qubit count."""
     grid = probabilities.reshape(rows, cols)
-    norm = Normalize(vmin=0, vmax=vmax if vmax > 0 else 1)
-    base_rgb = TOPO_CMAP(norm(grid))[..., :3]
+    counts = grid * shots
+    true_max = grid.max()
 
+    # Color scale: 5th/95th percentile of hit counts rather than 0-to-max.
+    # Sparse registers are mostly near-empty cells with a few outlier hot
+    # ones; stretching the colormap across the true 0-max range crowds
+    # everything into the floor color. Clipping the tails (clip=True) instead
+    # of stretching to fit them gives the middle of the distribution -- where
+    # the actual structure is -- real contrast. Computed independently per
+    # panel: hardware and simulator each stretch to their own distribution,
+    # even where their absolute ranges differ, so this is no longer a shared
+    # color scale between the two panels.
+    p_lo, p_hi = np.percentile(counts, [5, 95])
+    if p_hi <= p_lo:
+        p_hi = p_lo + 1e-9
+    color_norm = Normalize(vmin=p_lo, vmax=p_hi, clip=True)
+    base_rgb = TOPO_CMAP(color_norm(counts))[..., :3]
+
+    # Hillshade and contours are unchanged by the above -- both still key off
+    # the panel's true max, not the new percentile-clipped color range.
     # Hillshade off the *normalized* surface: raw probabilities are tiny
     # (often ~1e-4) relative to the dx=dy=1 cell spacing, so their true slopes
     # would be near zero and no relief would show. Normalizing to a 0-1
     # "elevation" first gives matplotlib slopes worth shading.
     light = LightSource(azdeg=315, altdeg=45)
-    normalized_grid = grid / vmax if vmax > 0 else grid
+    normalized_grid = grid / true_max if true_max > 0 else grid
     hillshade = light.hillshade(normalized_grid, vert_exag=3, dx=1, dy=1)
     blended = base_rgb * 0.7 + np.dstack([hillshade] * 3) * 0.3
     ax.imshow(np.clip(blended, 0, 1), origin="upper", interpolation="nearest")
 
-    if draw_contours and vmax > 0:
-        levels = np.linspace(0, vmax, 21)[1:]  # 20 evenly spaced intervals, excluding 0
+    if draw_contours and true_max > 0:
+        levels = np.linspace(0, true_max, 21)[1:]  # 20 evenly spaced intervals, excluding 0
         major_levels = levels[4::5]  # every 5th interval, bold + labeled
         ax.contour(grid, levels=levels, origin="upper", colors="black", linewidths=0.3, alpha=0.5)
         major_contours = ax.contour(grid, levels=major_levels, origin="upper", colors="black", linewidths=1.0)
@@ -312,29 +330,40 @@ def draw_topographic_panel(ax, probabilities: np.ndarray, shots: int, cols: int,
     ax.set_xticks([])
     ax.set_yticks([])
 
+    # Legend bar: a thin horizontal colorbar beneath the panel, labeled with
+    # the actual hit-count range it's displaying (p5 -> p95), not probability.
+    mappable = ScalarMappable(norm=color_norm, cmap=TOPO_CMAP)
+    cbar = ax.figure.colorbar(mappable, ax=ax, orientation="horizontal", fraction=0.05, pad=0.08, aspect=30)
+    cbar.set_ticks([p_lo, p_hi])
+    cbar.set_ticklabels([f"{p_lo:.0f}", f"{p_hi:.0f}"])
+    cbar.ax.tick_params(labelsize=7, length=0)
+    cbar.set_label("hit count (5th-95th pct)", fontsize=7, labelpad=2)
+
 
 def plot_comparison(sim_counts: dict[str, int], hardware_counts: dict[str, int] | None, backend_name: str | None) -> Path:
-    """Both output distributions as topographic maps, side by side, sharing a
-    color/contour scale so the shape of the divergence is directly visible."""
+    """Both output distributions as topographic maps, side by side. Each
+    panel's color scale is normalized independently to its own 5th-95th
+    percentile hit-count range (see draw_topographic_panel) -- this trades
+    away a directly comparable absolute color scale between the two panels
+    for internal contrast within each one, which sparse registers otherwise
+    lose entirely to a handful of outlier hot cells."""
     dim = 2**N_QUBITS
     cols, rows = grid_dims_for(dim)
     sim_probabilities = counts_to_probabilities(sim_counts, N_QUBITS)
 
-    fig, (ax_hw, ax_sim) = plt.subplots(1, 2, figsize=(12, 6))
+    fig, (ax_hw, ax_sim) = plt.subplots(1, 2, figsize=(12, 6.5))
     draw_contours = N_QUBITS <= CONTOUR_MAX_QUBITS
 
     if hardware_counts is not None:
         hardware_probabilities = counts_to_probabilities(hardware_counts, N_QUBITS)
-        vmax = max(sim_probabilities.max(), hardware_probabilities.max())
-        draw_topographic_panel(ax_hw, hardware_probabilities, SHOTS, cols, rows, vmax, draw_contours)
+        draw_topographic_panel(ax_hw, hardware_probabilities, SHOTS, cols, rows, draw_contours)
         ax_hw.set_title(f"Hardware ({backend_name})")
     else:
-        vmax = sim_probabilities.max()
         ax_hw.set_title("Hardware (not run -- pass --hardware)")
         ax_hw.set_xticks([])
         ax_hw.set_yticks([])
 
-    draw_topographic_panel(ax_sim, sim_probabilities, SHOTS, cols, rows, vmax, draw_contours)
+    draw_topographic_panel(ax_sim, sim_probabilities, SHOTS, cols, rows, draw_contours)
     ax_sim.set_title("Simulator (AerSimulator)")
 
     fig.suptitle(

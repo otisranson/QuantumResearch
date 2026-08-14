@@ -111,6 +111,19 @@
     opacity: 0.7;
   }
 
+  .legend {
+    display: none;
+    color: #ffb000;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    opacity: 0.75;
+    text-align: center;
+  }
+
+  .legend.visible {
+    display: block;
+  }
+
   .pager {
     display: flex;
     align-items: center;
@@ -304,6 +317,19 @@
   const VERT_EXAG = 3; // matches plot_comparison's hillshade vert_exag
   const HILLSHADE_BLEND = 0.3; // matches plot_comparison's 70/30 color/hillshade blend
 
+  // Linear-interpolation percentile, matching numpy.percentile's default
+  // method -- kept identical to quantum_radio.py's np.percentile(counts, [5,
+  // 95]) so the live and static color scales agree. `arr` is copied and
+  // sorted in place; call this once per row (setup time), never per frame.
+  function percentile(arr, p) {
+    const sorted = Float64Array.from(arr).sort();
+    const idx = (p / 100) * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+
   // `current` doubles as an "elevation" grid here -- same eased per-cell
   // signal paintPhosphor reads as brightness, just colormapped and hillshaded
   // instead. No contour lines: that needs marching squares over the live
@@ -312,9 +338,17 @@
   // since they degenerate to noise once cells aren't spatially correlated.
   // Uses a single ImageData blit instead of one fillRect per cell -- cheaper
   // than paintPhosphor, not more expensive, despite doing more math per cell.
-  function paintTopo(ctx, current, cols, rows) {
+  //
+  // p5Norm/p95Norm clip the *color* scale to this panel's 5th-95th percentile
+  // hit-count range (see populateRow), same as quantum_radio.py's
+  // draw_topographic_panel -- computed once from the static probability data,
+  // not from `current` itself, since `current` is a noisy per-frame draw and
+  // its own percentiles would jitter frame to frame. Hillshade is unaffected:
+  // it still reads raw `current` neighbor differences, same as before.
+  function paintTopo(ctx, current, cols, rows, p5Norm, p95Norm) {
     const imageData = ctx.createImageData(cols, rows);
     const data = imageData.data;
+    const colorRange = p95Norm - p5Norm || 1e-9;
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
@@ -336,7 +370,8 @@
         nz /= nlen;
         const shade = Math.max(0, nx * LIGHT_VEC[0] + ny * LIGHT_VEC[1] + nz * LIGHT_VEC[2]);
 
-        const [cr, cg, cb] = topoColor(current[index]);
+        const t = (current[index] - p5Norm) / colorRange;
+        const [cr, cg, cb] = topoColor(t);
         const shadeRgb = shade * 255;
         const pixelIndex = index * 4;
         data[pixelIndex] = cr * (1 - HILLSHADE_BLEND) + shadeRgb * HILLSHADE_BLEND;
@@ -367,14 +402,19 @@
     hardwarePanel.className = "panel";
     hardwarePanel.innerHTML =
       `<div class="panel-label">Hardware</div>` +
-      `<div class="canvas-wrap"><canvas></canvas><div class="no-data">NO DATA</div></div>`;
+      `<div class="canvas-wrap"><canvas></canvas><div class="no-data">NO DATA</div></div>` +
+      `<div class="legend"></div>`;
     const hardwareCanvas = hardwarePanel.querySelector("canvas");
     const hardwareNoData = hardwarePanel.querySelector(".no-data");
+    const hardwareLegend = hardwarePanel.querySelector(".legend");
 
     const simPanel = document.createElement("div");
     simPanel.className = "panel";
-    simPanel.innerHTML = `<div class="panel-label">Simulation</div><div class="canvas-wrap"><canvas></canvas></div>`;
+    simPanel.innerHTML =
+      `<div class="panel-label">Simulation</div><div class="canvas-wrap"><canvas></canvas></div>` +
+      `<div class="legend"></div>`;
     const simCanvas = simPanel.querySelector("canvas");
+    const simLegend = simPanel.querySelector(".legend");
 
     panels.appendChild(hardwarePanel);
     panels.appendChild(simPanel);
@@ -410,7 +450,7 @@
       canvas.style.height = `${rows * scale}px`;
     }
 
-    return { row, hardwareCanvas, simCanvas, hardwareNoData, context, readout, status, nStates, cols, rows };
+    return { row, hardwareCanvas, simCanvas, hardwareNoData, hardwareLegend, simLegend, context, readout, status, nStates, cols, rows };
   }
 
   // Fetches this row's data and wires up drawing state. Only ever touches its
@@ -418,7 +458,7 @@
   // tick function (or null on failure) that the pager calls only while this
   // row is the one on screen.
   async function populateRow(nQubits, dom) {
-    const { hardwareCanvas, simCanvas, hardwareNoData, context, readout, status, nStates, cols, rows } = dom;
+    const { hardwareCanvas, simCanvas, hardwareNoData, hardwareLegend, simLegend, context, readout, status, nStates, cols, rows } = dom;
     const hardwareCtx = hardwareCanvas.getContext("2d");
     const simCtx = simCanvas.getContext("2d");
 
@@ -449,6 +489,27 @@
     const simMax = arrayMax(simProbabilities);
     const hardwareMax = arrayMax(hardwareProbabilities);
 
+    // Topo mode's color scale: 5th-95th percentile of hit counts, computed
+    // once here from the static probability data (never from `current` --
+    // see paintTopo) and independently per panel, same as
+    // quantum_radio.py's draw_topographic_panel. Expressed as a fraction of
+    // that panel's own max, since that's the scale `current` lives on.
+    const simP5 = percentile(simProbabilities, 5);
+    const simP95 = percentile(simProbabilities, 95);
+    const simP5Norm = simMax > 0 ? simP5 / simMax : 0;
+    const simP95Norm = simMax > 0 ? simP95 / simMax : 1;
+    simLegend.textContent = `5TH-95TH PCT: ${Math.round(simP5 * shots)}-${Math.round(simP95 * shots)} HITS`;
+
+    let hardwareP5Norm = 0;
+    let hardwareP95Norm = 1;
+    if (hasHardware) {
+      const hardwareP5 = percentile(hardwareProbabilities, 5);
+      const hardwareP95 = percentile(hardwareProbabilities, 95);
+      hardwareP5Norm = hardwareMax > 0 ? hardwareP5 / hardwareMax : 0;
+      hardwareP95Norm = hardwareMax > 0 ? hardwareP95 / hardwareMax : 1;
+      hardwareLegend.textContent = `5TH-95TH PCT: ${Math.round(hardwareP5 * shots)}-${Math.round(hardwareP95 * shots)} HITS`;
+    }
+
     readout.textContent =
       typeof data.total_variation_distance === "number"
         ? `TVD: ${data.total_variation_distance.toFixed(4)}`
@@ -464,10 +525,10 @@
       const paint = renderMode === "topo" ? paintTopo : paintPhosphor;
       if (hasHardware) {
         updateBrightness(hardwareProbabilities, hardwareMax, hardwareBrightness, nStates);
-        paint(hardwareCtx, hardwareBrightness, cols, rows);
+        paint(hardwareCtx, hardwareBrightness, cols, rows, hardwareP5Norm, hardwareP95Norm);
       }
       updateBrightness(simProbabilities, simMax, simBrightness, nStates);
-      paint(simCtx, simBrightness, cols, rows);
+      paint(simCtx, simBrightness, cols, rows, simP5Norm, simP95Norm);
 
       shot = (shot + 1) % (shots + 1);
       status.textContent = `SHOT ${String(shot).padStart(4, "0")} / ${shots}`;
@@ -520,6 +581,10 @@
     button.addEventListener("click", () => {
       renderMode = renderMode === "phosphor" ? "topo" : "phosphor";
       button.textContent = renderMode === "topo" ? "MODE: TOPO" : "MODE: PHOSPHOR";
+      // Legend bars only mean anything against the topo color scale -- every
+      // row's legend exists in the DOM regardless of which page is showing,
+      // so toggle them all rather than just the current page's.
+      document.querySelectorAll(".legend").forEach((el) => el.classList.toggle("visible", renderMode === "topo"));
     });
     return button;
   }
