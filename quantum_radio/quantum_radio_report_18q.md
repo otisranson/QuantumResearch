@@ -3,7 +3,7 @@
 Generated automatically by `quantum_radio.py`. Overwritten on every run --
 prior results live in git history, not accumulated here.
 
-- **Timestamp:** 2026-08-14T10:53:14
+- **Timestamp:** 2026-08-14T13:39:17
 - **Qubits:** 18
 - **Shots per run:** 2097152
 - **Phase angle:** pi * phi = 5.083204 rad (phi = 1.618034)
@@ -13,4 +13,4 @@ Quantum backend (non-blocking; fetch results later with `--check-job`).
 
 ## Simulator distribution only
 
-262062 of 262144 basis states appeared across 2097152 shots.
+262053 of 262144 basis states appeared across 2097152 shots.

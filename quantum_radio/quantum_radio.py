@@ -39,12 +39,14 @@ Repository: github.com/otisranson/QuantumResearch
 
 import argparse
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LightSource, LinearSegmentedColormap, Normalize
 from qiskit import QuantumCircuit, transpile
 
 OUTPUT_DIR = Path(__file__).parent  # quantum_radio_crt.html fetches its JSON from this same directory
@@ -240,43 +242,105 @@ def novel_hardware_states(sim_counts: dict[str, int], hardware_counts: dict[str,
     return sorted(state for state in hardware_counts if state not in sim_counts)
 
 
-def plot_comparison(sim_counts: dict[str, int], hardware_counts: dict[str, int] | None, backend_name: str | None) -> Path:
-    """Both output distributions as histograms, side by side, sharing a y-axis
-    scale so the shape of the divergence is directly visible.
+def grid_dims_for(n_states: int) -> tuple[int, int]:
+    """Factor n_states (a power of 2) into a (cols, rows) grid as close to
+    square as possible, cols >= rows -- mirrors quantum_radio_crt.html's
+    gridDimsFor exactly, so both renderers lay the same basis states out on
+    the same shape of grid."""
+    cols = round(math.sqrt(n_states))
+    while n_states % cols != 0:
+        cols += 1
+    return cols, n_states // cols
 
-    Uses fill_between (one polygon per panel) rather than bar (one Rectangle
-    patch per basis state). dim = 2**N_QUBITS, so bar's per-state object
-    overhead was growing exponentially with qubit count -- at 20+ qubits that's
-    millions of patch objects, enough to exhaust memory and lock up the
-    machine. fill_between renders the same shape from a single vectorized
-    path, independent of qubit count."""
+
+# Hypsometric tint: deep blue-black (unvisited states) through green, yellow,
+# red, to white at the hottest state(s) -- a topographic/elevation palette
+# rather than RdYlGn_r's bare green-yellow-red span, so zero-probability
+# states read as "below sea level" instead of just "least green."
+TOPO_CMAP = LinearSegmentedColormap.from_list(
+    "quantum_radio_topo",
+    [
+        (0.00, "#01040c"),
+        (0.20, "#0b3d91"),
+        (0.45, "#2a9d34"),
+        (0.65, "#e9c716"),
+        (0.82, "#d1341f"),
+        (1.00, "#fdf8ef"),
+    ],
+)
+
+
+# Above this many qubits, adjacent grid cells stop meaning anything -- the grid
+# layout is just consecutive basis-state indices reshaped into a rectangle, so
+# there's no reason neighboring cells have similar probability the way real
+# elevation data does. Below this size the resulting "terrain" still reads as
+# a map; above it, 20 contour levels degenerate into an unreadable tangle of
+# tiny squiggles, so contours (but not the colormap/hillshade, which still
+# look fine as texture at any size) are skipped past this threshold.
+CONTOUR_MAX_QUBITS = 8
+
+
+def draw_topographic_panel(ax, probabilities: np.ndarray, shots: int, cols: int, rows: int, vmax: float, draw_contours: bool) -> None:
+    """Render one panel's probability distribution as a topographic map:
+    reshape the flat per-basis-state array onto the (cols, rows) grid, color
+    it with TOPO_CMAP, hillshade it for relief, and (below CONTOUR_MAX_QUBITS)
+    contour it with hit-count labels. All three steps are real
+    matplotlib/numpy operations over a single 2D array -- unlike the old
+    per-basis-state bar/fill rendering, cost here is one imshow + one contour
+    pass regardless of qubit count."""
+    grid = probabilities.reshape(rows, cols)
+    norm = Normalize(vmin=0, vmax=vmax if vmax > 0 else 1)
+    base_rgb = TOPO_CMAP(norm(grid))[..., :3]
+
+    # Hillshade off the *normalized* surface: raw probabilities are tiny
+    # (often ~1e-4) relative to the dx=dy=1 cell spacing, so their true slopes
+    # would be near zero and no relief would show. Normalizing to a 0-1
+    # "elevation" first gives matplotlib slopes worth shading.
+    light = LightSource(azdeg=315, altdeg=45)
+    normalized_grid = grid / vmax if vmax > 0 else grid
+    hillshade = light.hillshade(normalized_grid, vert_exag=3, dx=1, dy=1)
+    blended = base_rgb * 0.7 + np.dstack([hillshade] * 3) * 0.3
+    ax.imshow(np.clip(blended, 0, 1), origin="upper", interpolation="nearest")
+
+    if draw_contours and vmax > 0:
+        levels = np.linspace(0, vmax, 21)[1:]  # 20 evenly spaced intervals, excluding 0
+        major_levels = levels[4::5]  # every 5th interval, bold + labeled
+        ax.contour(grid, levels=levels, origin="upper", colors="black", linewidths=0.3, alpha=0.5)
+        major_contours = ax.contour(grid, levels=major_levels, origin="upper", colors="black", linewidths=1.0)
+        ax.clabel(major_contours, fmt=lambda level: f"{level * shots:.0f}", fontsize=6, inline=True)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def plot_comparison(sim_counts: dict[str, int], hardware_counts: dict[str, int] | None, backend_name: str | None) -> Path:
+    """Both output distributions as topographic maps, side by side, sharing a
+    color/contour scale so the shape of the divergence is directly visible."""
     dim = 2**N_QUBITS
-    x = np.arange(dim)
+    cols, rows = grid_dims_for(dim)
     sim_probabilities = counts_to_probabilities(sim_counts, N_QUBITS)
 
-    fig, (ax_hw, ax_sim) = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    fig, (ax_hw, ax_sim) = plt.subplots(1, 2, figsize=(12, 6))
+    draw_contours = N_QUBITS <= CONTOUR_MAX_QUBITS
 
     if hardware_counts is not None:
         hardware_probabilities = counts_to_probabilities(hardware_counts, N_QUBITS)
-        shared_ylim = max(sim_probabilities.max(), hardware_probabilities.max()) * 1.1
-        ax_hw.fill_between(x, hardware_probabilities, step="mid", color="tab:red", linewidth=0, rasterized=True)
+        vmax = max(sim_probabilities.max(), hardware_probabilities.max())
+        draw_topographic_panel(ax_hw, hardware_probabilities, SHOTS, cols, rows, vmax, draw_contours)
         ax_hw.set_title(f"Hardware ({backend_name})")
     else:
-        shared_ylim = sim_probabilities.max() * 1.1
+        vmax = sim_probabilities.max()
         ax_hw.set_title("Hardware (not run -- pass --hardware)")
+        ax_hw.set_xticks([])
+        ax_hw.set_yticks([])
 
-    ax_hw.set_xlabel(f"basis state (0-{dim - 1})")
-    ax_hw.set_ylabel("probability")
-    ax_hw.set_xlim(0, dim - 1)
-    ax_hw.set_ylim(0, shared_ylim)
-
-    ax_sim.fill_between(x, sim_probabilities, step="mid", color="tab:blue", linewidth=0, rasterized=True)
+    draw_topographic_panel(ax_sim, sim_probabilities, SHOTS, cols, rows, vmax, draw_contours)
     ax_sim.set_title("Simulator (AerSimulator)")
-    ax_sim.set_xlabel(f"basis state (0-{dim - 1})")
-    ax_sim.set_xlim(0, dim - 1)
-    ax_sim.set_ylim(0, shared_ylim)
 
-    fig.suptitle(f"Quantum Radio ({N_QUBITS} qubits): hardware vs. simulator output distribution")
+    fig.suptitle(
+        f"Quantum Radio ({N_QUBITS} qubits, {cols}×{rows} grid, {SHOTS} shots): "
+        "hardware vs. simulator output distribution"
+    )
     fig.tight_layout()
     path = OUTPUT_DIR / f"quantum_radio_plot_{_tag()}.png"
     fig.savefig(path, dpi=150)
