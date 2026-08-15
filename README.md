@@ -268,6 +268,10 @@ is the highest-scoring candidate found, alongside its metrics and the full evolu
 
 ## `quantum_music/`
 
+**[▶ Try it live](https://otisranson.github.io/QuantumResearch/)** -- runs entirely client-side
+(React + Web Audio API, no backend), so the GitHub Pages deploy is the real thing, not a demo.
+The GIF below is a preview for anyone who can't click through.
+
 <img src="quantum_music/screenshots/screenshot.gif" alt="Quantum Music: playing back the Fur Elise excerpt, gates landing live on the circuit diagram" width="640">
 
 A playable piano keyboard, one octave, where each of the twelve keys is bound to a quantum gate
