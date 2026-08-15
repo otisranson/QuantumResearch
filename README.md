@@ -268,7 +268,7 @@ is the highest-scoring candidate found, alongside its metrics and the full evolu
 
 ## `quantum_music/`
 
-![Quantum Music](quantum_music/screenshots/screenshot.png)
+<img src="quantum_music/screenshots/screenshot.gif" alt="Quantum Music: playing back the Fur Elise excerpt, gates landing live on the circuit diagram" width="640">
 
 A playable piano keyboard, one octave, where each of the twelve keys is bound to a quantum gate
 instead of just a note. Press a key and two things happen at once: an audible sine-wave tone
@@ -421,7 +421,7 @@ averaged away.
 
 ## `quantum_radio/`
 
-![Quantum Radio, live topographic mode: 12-qubit hardware vs. simulator, hillshaded and percentile-normalized](quantum_radio/screenshots/screenshot.png)
+<img src="quantum_radio/screenshots/screenshot.gif" alt="Quantum Radio, live topographic mode: 12-qubit hardware vs. simulator, hillshaded and percentile-normalized" width="640">
 
 A sparse listening experiment rather than a computation: 10 qubits get a Hadamard each (full
 superposition), a single `CX` chain `0→1→2→...→9` (one thread of entanglement across the whole
