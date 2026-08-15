@@ -104,7 +104,7 @@ def _marginal_joint(bits: np.ndarray, probs: np.ndarray, qubit_indices: list[int
     aggregating probability mass by the reduced tuple of bit values."""
     dist: dict[tuple, float] = defaultdict(float)
     sub = bits[:, qubit_indices]
-    for row, p in zip(sub, probs):
+    for row, p in zip(sub, probs, strict=True):
         dist[tuple(row)] += p
     return dist
 
@@ -261,7 +261,7 @@ def plot_correlations(
     panels = [("Simulator", sim_corr), (hw_label, hw_corr), ("Hardware - Simulator (Δ)", diff)]
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5.2))
-    for ax, (title, mat) in zip(axes, panels):
+    for ax, (title, mat) in zip(axes, panels, strict=True):
         im = ax.imshow(mat, cmap=DIVERGING_CMAP, vmin=-1, vmax=1)
         ax.set_title(title)
         ax.set_xticks(range(n_qubits))
@@ -360,7 +360,7 @@ def plot_dendrograms(
         z_cap = max(max(all_z, default=Z_SIGNIFICANT), Z_SIGNIFICANT)
 
     fig, axes = plt.subplots(1, 2, figsize=(max(15, n_qubits * 1.1), 7.2), sharey=True)
-    for ax, tree, title in zip(axes, (sim_tree, hw_tree), ("Simulator", hw_label)):
+    for ax, tree, title in zip(axes, (sim_tree, hw_tree), ("Simulator", hw_label), strict=True):
         positions: dict = {}
         _assign_positions(tree, leaf_order, 0, positions)
         if highlight_upto is not None:
